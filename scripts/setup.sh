@@ -12,10 +12,27 @@ SETUP_LABEL="com.flux.setup=local-source"
 die() { echo "Error: $*" >&2; exit 1; }
 
 if ! command -v docker >/dev/null 2>&1; then
-  die "Docker is required. Install Docker Desktop: https://www.docker.com/get-started"
+  die "Docker is required.
+  Linux:       https://docs.docker.com/engine/install/
+  macOS/Win:   https://www.docker.com/get-started"
 fi
 if ! docker info >/dev/null 2>&1; then
-  die "Docker is installed but its daemon is not available. Start Docker Desktop and try again."
+  # Distinguish "daemon is not running" from "you are not allowed to talk to it",
+  # because on Linux the second is far more common and the fix is completely different.
+  docker_err="$(docker info 2>&1 || true)"
+  case "$docker_err" in
+    *"permission denied"*|*"Got permission denied"*)
+      die "Docker is installed but this user cannot reach it.
+  Add yourself to the docker group, then log out and back in (or run: newgrp docker):
+      sudo usermod -aG docker \$USER
+  Or run this script with sudo."
+      ;;
+    *)
+      die "Docker is installed but its daemon is not running.
+  Linux:       sudo systemctl start docker
+  macOS/Win:   start Docker Desktop"
+      ;;
+  esac
 fi
 if ! command -v git >/dev/null 2>&1; then
   die "Git is required to embed this checkout's revision. Install it: https://git-scm.com/downloads"

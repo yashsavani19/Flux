@@ -10,8 +10,30 @@ Getting this board running on your machine. Two commands, then a URL.
 
 ## What you need first
 
-**Docker.** That's genuinely it — everything else runs inside the container.
-If you don't have it: <https://www.docker.com/get-started>
+**Docker, and git.** Everything else runs inside the container.
+
+On Linux, installing Docker is two steps, and people usually miss the second:
+
+```bash
+# 1. Install Docker Engine — follow your distro's instructions:
+#    https://docs.docker.com/engine/install/
+
+# 2. Let your user talk to Docker without sudo:
+sudo usermod -aG docker $USER
+newgrp docker          # or just log out and back in
+```
+
+Skip step 2 and every docker command fails with "permission denied while trying to connect to the Docker
+daemon socket". The setup script detects that specific case and tells you this, but it's easier to just do
+it up front.
+
+Check it works before going further:
+
+```bash
+docker info >/dev/null && echo "docker ok"
+```
+
+On macOS or Windows, install Docker Desktop instead: <https://www.docker.com/get-started>
 
 Bun and Node are only needed if you want to run the code outside Docker for development.
 
@@ -98,6 +120,10 @@ If you'd rather use Compose:
 ```bash
 docker compose up -d --build
 ```
+
+If that errors with "docker: 'compose' is not a docker command", you have Docker without the Compose v2
+plugin — install `docker-compose-plugin` from the same repository you installed Docker from. The setup
+script doesn't need Compose at all, so this is optional either way.
 
 Same result, and also on port 3001 by default. Copy `.env.example` to `.env` to change the port, container
 name or volume — Compose reads that file; the shell script reads the same settings from the environment.
