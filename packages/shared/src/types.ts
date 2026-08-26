@@ -79,6 +79,7 @@ export type Project = {
   name: string;
   description?: string;
   visibility?: ProjectVisibility;
+  columns?: Column[]; // Board columns. Absent means DEFAULT_COLUMNS.
 };
 
 // ============ API Key Types ============
@@ -128,7 +129,131 @@ export type Store = {
   blobs?: Blob[];
 };
 
-// Status columns for the Kanban board
+// ============ Board Columns ============
+
+// A column's ROLE is what Flux understands the column to mean. Labels are free
+// text and may be renamed at will; behaviour is driven by the role, never by the
+// label or the id.
+//
+//   backlog - not yet committed to. A task here cannot be moved straight into an
+//             'active' column; it must pass through a 'ready' column first.
+//   ready   - committed to and startable. Where new tasks and dependency-unblocked
+//             work waits to be picked up.
+//   active  - being worked on right now. Moving a task here records the agent in
+//             task.workers.
+//   done    - terminal. Satisfies dependencies for other tasks, drops out of the
+//             ready list, counts towards project progress, and clears task.workers.
+export type ColumnRole = 'backlog' | 'ready' | 'active' | 'done';
+
+export const COLUMN_ROLES: ColumnRole[] = ['backlog', 'ready', 'active', 'done'];
+
+export const COLUMN_ROLE_CONFIG: Record<ColumnRole, { label: string; description: string }> = {
+  backlog: {
+    label: 'Not started',
+    description: 'Ideas and unplanned work. Tasks here must move to a startable column before an agent can begin them.',
+  },
+  ready: {
+    label: 'Ready to start',
+    description: 'Committed work waiting to be picked up. Agents look here for their next task.',
+  },
+  active: {
+    label: 'Being worked on',
+    description: 'Work in flight. Moving a task here records which agent is on it.',
+  },
+  done: {
+    label: 'Finished',
+    description: 'Complete. Unblocks anything waiting on this task and counts towards progress.',
+  },
+};
+
+// A single column on the board.
+export type Column = {
+  id: string;      // Stable slug, e.g. 'in_progress'. NEVER changes once created -
+                   // it is what Task.status holds and what agents pass over MCP.
+  label: string;   // Display name, sentence case. Freely renameable.
+  color: string;   // Hex swatch, e.g. '#3b82f6'
+  role: ColumnRole;
+  order: number;   // Left-to-right position, ascending
+};
+
+// The four columns every project starts with. These reproduce Flux's original
+// hardcoded behaviour exactly, so existing projects and existing tasks are
+// unaffected by the move to configurable columns.
+export const DEFAULT_COLUMNS: Column[] = [
+  { id: 'planning', label: 'Planning', color: '#a855f7', role: 'backlog', order: 0 },
+  { id: 'todo', label: 'To do', color: '#6b7280', role: 'ready', order: 1 },
+  { id: 'in_progress', label: 'In progress', color: '#3b82f6', role: 'active', order: 2 },
+  { id: 'done', label: 'Done', color: '#22c55e', role: 'done', order: 3 },
+];
+
+// Palette offered when creating a column.
+export const COLUMN_COLORS = [
+  '#a855f7', // purple
+  '#6b7280', // gray
+  '#3b82f6', // blue
+  '#22c55e', // green
+  '#f59e0b', // amber
+  '#ef4444', // red
+  '#06b6d4', // cyan
+  '#ec4899', // pink
+];
+
+// Turn a user-typed column name into a stable id, unique within `existing`.
+export function slugifyColumnId(label: string, existing: string[] = []): string {
+  const base = label
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'column';
+  if (!existing.includes(base)) return base;
+  let n = 2;
+  while (existing.includes(`${base}_${n}`)) n++;
+  return `${base}_${n}`;
+}
+
+// Validate a column list before it is saved. Returns an error message, or null
+// when the list is usable. A board with no startable column or no finished
+// column would strand every task and break dependency tracking.
+export function validateColumns(columns: Column[]): string | null {
+  if (!Array.isArray(columns) || columns.length === 0) {
+    return 'A board needs at least one column.';
+  }
+  const ids = columns.map(c => c.id);
+  if (new Set(ids).size !== ids.length) {
+    return 'Two columns cannot share the same id.';
+  }
+  for (const c of columns) {
+    if (!c.id || !/^[a-z0-9_]+$/.test(c.id)) {
+      return `Column id "${c.id}" must be lowercase letters, numbers and underscores.`;
+    }
+    if (!c.label || !c.label.trim()) {
+      return 'Every column needs a name.';
+    }
+    if (!COLUMN_ROLES.includes(c.role)) {
+      return `Column "${c.label}" has an unknown role "${c.role}".`;
+    }
+    if (!/^#[0-9a-fA-F]{6}$/.test(c.color)) {
+      return `Column "${c.label}" needs a colour like #3b82f6.`;
+    }
+  }
+  if (!columns.some(c => c.role === 'ready')) {
+    return 'Keep at least one column for work that is ready to start.';
+  }
+  if (!columns.some(c => c.role === 'done')) {
+    return 'Keep at least one column for finished work, or nothing can ever complete.';
+  }
+  return null;
+}
+
+// Sort a column list into board order without mutating the input.
+export function sortColumns(columns: Column[]): Column[] {
+  return [...columns].sort((a, b) => a.order - b.order);
+}
+
+// ---- Legacy status constants ----
+// Retained so nothing breaks while callers migrate to project columns. Prefer
+// getColumns(projectId) from the store: these describe the DEFAULTS only and are
+// wrong for any project whose columns have been customised.
 export type Status = 'planning' | 'todo' | 'in_progress' | 'done';
 
 export const STATUSES: Status[] = ['planning', 'todo', 'in_progress', 'done'];
@@ -136,8 +261,8 @@ export const STATUSES: Status[] = ['planning', 'todo', 'in_progress', 'done'];
 // Status display names and colors
 export const STATUS_CONFIG: Record<Status, { label: string; color: string }> = {
   planning: { label: 'Planning', color: '#a855f7' },
-  todo: { label: 'To Do', color: '#6b7280' },
-  in_progress: { label: 'In Progress', color: '#3b82f6' },
+  todo: { label: 'To do', color: '#6b7280' },
+  in_progress: { label: 'In progress', color: '#3b82f6' },
   done: { label: 'Done', color: '#22c55e' },
 };
 

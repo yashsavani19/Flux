@@ -1,4 +1,5 @@
-import type { Task, Epic, Project, Store, Blob, Webhook, WebhookDelivery, WebhookEventType, WebhookPayload, StoreWithWebhooks, Priority, CommentAuthor, TaskComment, Guardrail, ApiKey, KeyScope, CliAuthRequest } from './types.js';
+import type { Task, Epic, Project, Store, Blob, Webhook, WebhookDelivery, WebhookEventType, WebhookPayload, StoreWithWebhooks, Priority, CommentAuthor, TaskComment, Guardrail, ApiKey, KeyScope, CliAuthRequest, Column, ColumnRole } from './types.js';
+import { DEFAULT_COLUMNS, sortColumns, validateColumns } from './types.js';
 
 // Auth functions injected at runtime (server-side only, uses Node crypto)
 type AuthFunctions = {
@@ -239,6 +240,130 @@ export function getProjectStats(projectId: string): { total: number; done: numbe
     total: tasks.length,
     done: tasks.filter(t => t.status === 'done').length,
   };
+}
+
+// ============ Column Operations ============
+
+// Every column read goes through here. A project that has never customised its
+// board has no `columns` field and falls back to the original four, so existing
+// data keeps behaving exactly as it did.
+export function getColumns(projectId: string): Column[] {
+  const project = db.data.projects.find(p => p.id === projectId);
+  const columns = project?.columns;
+  if (!columns || columns.length === 0) {
+    return DEFAULT_COLUMNS.map(c => ({ ...c }));
+  }
+  return sortColumns(columns).map(c => ({ ...c }));
+}
+
+export function getColumn(projectId: string, columnId: string): Column | undefined {
+  return getColumns(projectId).find(c => c.id === columnId);
+}
+
+// Replace a project's whole column list. Whole-list replacement keeps ordering
+// atomic - no reorder races between the board and an agent.
+export function setColumns(projectId: string, columns: Column[]): Column[] {
+  const project = db.data.projects.find(p => p.id === projectId);
+  if (!project) throw new Error(`Project not found: ${projectId}`);
+
+  const error = validateColumns(columns);
+  if (error) throw new Error(error);
+
+  // Normalise order to a dense 0..n-1 sequence so the board never has gaps.
+  const normalised = sortColumns(columns).map((c, i) => ({ ...c, order: i }));
+
+  // No task may be stranded in a column that no longer exists.
+  const ids = new Set(normalised.map(c => c.id));
+  const stranded = db.data.tasks.filter(
+    t => t.project_id === projectId && !t.archived && !ids.has(t.status)
+  );
+  if (stranded.length > 0) {
+    const lost = [...new Set(stranded.map(t => t.status))].join(', ');
+    throw new Error(
+      `${stranded.length} task(s) still sit in removed column(s): ${lost}. Move them first.`
+    );
+  }
+
+  project.columns = normalised;
+  db.write();
+  return normalised.map(c => ({ ...c }));
+}
+
+// Move every task out of one column and into another, then drop the first.
+// This is what "delete a column" actually does - tasks are never destroyed.
+export function deleteColumn(projectId: string, columnId: string, moveTasksTo: string): Column[] {
+  const columns = getColumns(projectId);
+  if (!columns.some(c => c.id === columnId)) {
+    throw new Error(`Column not found: ${columnId}`);
+  }
+  if (columnId === moveTasksTo) {
+    throw new Error('Choose a different column to move the tasks into.');
+  }
+  if (!columns.some(c => c.id === moveTasksTo)) {
+    throw new Error(`Column not found: ${moveTasksTo}`);
+  }
+
+  const remaining = columns.filter(c => c.id !== columnId);
+  const error = validateColumns(remaining);
+  if (error) throw new Error(error);
+
+  db.data.tasks.forEach(task => {
+    if (task.project_id === projectId && task.status === columnId) {
+      task.status = moveTasksTo;
+      task.updated_at = new Date().toISOString();
+    }
+  });
+  db.data.epics.forEach(epic => {
+    if (epic.project_id === projectId && epic.status === columnId) {
+      epic.status = moveTasksTo;
+    }
+  });
+
+  const project = db.data.projects.find(p => p.id === projectId);
+  if (!project) throw new Error(`Project not found: ${projectId}`);
+  project.columns = remaining.map((c, i) => ({ ...c, order: i }));
+  db.write();
+  return project.columns.map(c => ({ ...c }));
+}
+
+// ---- Role lookups ----
+// All status behaviour is expressed through these. Nothing outside this file
+// should compare a status against a hardcoded 'done' / 'in_progress' string.
+
+export function getColumnRole(projectId: string, columnId: string): ColumnRole | undefined {
+  return getColumn(projectId, columnId)?.role;
+}
+
+export function isDoneColumn(projectId: string, columnId: string): boolean {
+  return getColumnRole(projectId, columnId) === 'done';
+}
+
+export function isActiveColumn(projectId: string, columnId: string): boolean {
+  return getColumnRole(projectId, columnId) === 'active';
+}
+
+export function isBacklogColumn(projectId: string, columnId: string): boolean {
+  return getColumnRole(projectId, columnId) === 'backlog';
+}
+
+// A task is complete when it sits in a column whose role is 'done'. Looks the
+// task's own project up, so it is safe to call for any task.
+export function isTaskDone(task: Pick<Task, 'project_id' | 'status'>): boolean {
+  return isDoneColumn(task.project_id, task.status);
+}
+
+// Where a brand-new task lands: the leftmost column, matching the original
+// behaviour where everything started in 'planning'.
+export function getDefaultColumnId(projectId: string): string {
+  const columns = getColumns(projectId);
+  return columns[0]!.id;
+}
+
+// Where dependency-unblocked work waits: the leftmost 'ready' column, falling
+// back to the leftmost column. Used when something must be created startable.
+export function getReadyColumnId(projectId: string): string {
+  const columns = getColumns(projectId);
+  return (columns.find(c => c.role === 'ready') ?? columns[0]!).id;
 }
 
 // ============ Epic Operations ============
