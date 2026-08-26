@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'preact/hooks'
 import { ConfirmModal } from './ConfirmModal'
 import { Modal } from './Modal'
-import { createEpic, updateEpic, deleteEpic, getEpics } from '../stores'
-import type { Epic, Status } from '@flux/shared'
-import { STATUSES, STATUS_CONFIG } from '@flux/shared'
+import { createEpic, updateEpic, deleteEpic, getColumns, getEpics } from '../stores'
+import type { Column, Epic } from '@flux/shared'
+import { DEFAULT_COLUMNS } from '@flux/shared'
 
 interface EpicFormProps {
   isOpen: boolean
@@ -19,10 +19,16 @@ export function EpicForm({ isOpen, onClose, onSave, epic, projectId }: EpicFormP
   const [status, setStatus] = useState<string>('todo')
   const [dependsOn, setDependsOn] = useState<string[]>([])
   const [availableEpics, setAvailableEpics] = useState<Epic[]>([])
+  const [columns, setColumns] = useState<Column[]>(DEFAULT_COLUMNS)
   const [submitting, setSubmitting] = useState(false)
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
 
   const isEdit = !!epic
+
+  // An epic can sit in a column this form has not loaded - show the raw id
+  // rather than nothing.
+  const columnLabel = (columnId: string) =>
+    columns.find(c => c.id === columnId)?.label ?? columnId
 
   useEffect(() => {
     if (isOpen) {
@@ -33,8 +39,12 @@ export function EpicForm({ isOpen, onClose, onSave, epic, projectId }: EpicFormP
   }, [isOpen, epic, projectId])
 
   const loadFormData = async () => {
-    const allEpics = await getEpics(projectId)
+    const [allEpics, columnsData] = await Promise.all([
+      getEpics(projectId),
+      getColumns(projectId).catch(() => DEFAULT_COLUMNS),
+    ])
     setAvailableEpics(epic ? allEpics.filter(e => e.id !== epic.id) : allEpics)
+    setColumns(columnsData)
     if (epic) {
       setTitle(epic.title)
       setNotes(epic.notes)
@@ -43,8 +53,8 @@ export function EpicForm({ isOpen, onClose, onSave, epic, projectId }: EpicFormP
     } else {
       setTitle('')
       setNotes('')
-      setStatus('todo')
       setDependsOn([])
+      setStatus((columnsData.find(c => c.role === 'ready') ?? columnsData[0])?.id ?? 'todo')
     }
   }
 
@@ -103,7 +113,7 @@ export function EpicForm({ isOpen, onClose, onSave, epic, projectId }: EpicFormP
 
   return (
     <>
-      <Modal isOpen={isOpen} onClose={onClose} title={isEdit ? 'Edit Epic' : 'New Epic'}>
+      <Modal isOpen={isOpen} onClose={onClose} title={isEdit ? 'Edit epic' : 'New epic'}>
         <form onSubmit={handleSubmit}>
         <div class="form-control mb-4">
           <label class="label">
@@ -141,8 +151,11 @@ export function EpicForm({ isOpen, onClose, onSave, epic, projectId }: EpicFormP
             value={status}
             onChange={(e) => setStatus((e.target as HTMLSelectElement).value)}
           >
-            {STATUSES.map(s => (
-              <option key={s} value={s}>{STATUS_CONFIG[s].label}</option>
+            {!columns.some(c => c.id === status) && (
+              <option value={status}>{status}</option>
+            )}
+            {columns.map(column => (
+              <option key={column.id} value={column.id}>{column.label}</option>
             ))}
           </select>
         </div>
@@ -167,7 +180,7 @@ export function EpicForm({ isOpen, onClose, onSave, epic, projectId }: EpicFormP
                     onChange={() => toggleDependency(e.id)}
                   />
                   <span class="text-sm truncate flex-1">{e.title}</span>
-                  <span class="badge badge-ghost badge-xs">{STATUS_CONFIG[e.status as Status]?.label || e.status}</span>
+                  <span class="badge badge-ghost badge-xs">{columnLabel(e.status)}</span>
                 </label>
               ))}
             </div>
@@ -191,7 +204,7 @@ export function EpicForm({ isOpen, onClose, onSave, epic, projectId }: EpicFormP
       </Modal>
       <ConfirmModal
         isOpen={deleteConfirmOpen}
-        title="Delete Epic?"
+        title="Delete epic?"
         description="Tasks in this epic will be moved to Unassigned."
         confirmLabel="Delete"
         confirmClassName="btn-error"

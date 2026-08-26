@@ -233,7 +233,7 @@ export function ProjectList(_props: RoutableProps) {
           >
             <div class="card-body items-center justify-center text-center">
               <div class="text-4xl font-semibold">+</div>
-              <div class="text-lg font-semibold">New Project</div>
+              <div class="text-lg font-semibold">New project</div>
             </div>
           </button>
 
@@ -380,7 +380,7 @@ export function ProjectList(_props: RoutableProps) {
             {settingsSection === "reset" && (
               <div class="space-y-4">
                 <div>
-                  <h4 class="text-lg font-semibold">Reset Database</h4>
+                  <h4 class="text-lg font-semibold">Reset database</h4>
                   <p class="text-sm text-base-content/60">
                     This will wipe all projects, tasks, epics, and webhooks.
                   </p>
@@ -400,7 +400,7 @@ export function ProjectList(_props: RoutableProps) {
                   {resetting ? (
                     <span class="loading loading-spinner loading-sm"></span>
                   ) : (
-                    "Reset Database"
+                    "Reset database"
                   )}
                 </button>
               </div>
@@ -412,12 +412,12 @@ export function ProjectList(_props: RoutableProps) {
       <Modal
         isOpen={!!editingProject}
         onClose={closeEditModal}
-        title="Edit Project"
+        title="Edit project"
       >
         <form onSubmit={handleEditSubmit}>
           <div class="form-control mb-4">
             <label class="label">
-              <span class="label-text">Project Name *</span>
+              <span class="label-text">Project name *</span>
             </label>
             <input
               type="text"
@@ -476,7 +476,7 @@ export function ProjectList(_props: RoutableProps) {
 
       <ConfirmModal
         isOpen={resetConfirmOpen}
-        title="Reset Database?"
+        title="Reset database?"
         description="This will wipe all projects, tasks, epics, and webhooks. This action cannot be undone."
         confirmLabel="Reset"
         confirmClassName="btn-error"
@@ -489,7 +489,7 @@ export function ProjectList(_props: RoutableProps) {
 
       <ConfirmModal
         isOpen={deleteConfirmOpen}
-        title="Delete Project?"
+        title="Delete project?"
         description="This will permanently delete the project and ALL its epics and tasks. This action cannot be undone."
         confirmLabel="Delete"
         confirmClassName="btn-error"

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'preact/hooks'
 
 interface BoardPreferences {
   viewMode: 'normal' | 'condensed'
-  planningCollapsed: boolean
+  collapsedColumns: string[]
   collapsedEpics: string[]
 }
 
@@ -12,34 +12,41 @@ function getStorageKey(projectId: string): string {
   return `${STORAGE_KEY_PREFIX}-${projectId}`
 }
 
+const DEFAULTS: BoardPreferences = {
+  viewMode: 'normal',
+  collapsedColumns: [],
+  collapsedEpics: [],
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
 function getInitialPreferences(projectId: string): BoardPreferences {
-  if (typeof window === 'undefined') {
-    return {
-      viewMode: 'normal',
-      planningCollapsed: false,
-      collapsedEpics: [],
-    }
-  }
+  if (typeof window === 'undefined') return { ...DEFAULTS }
 
   try {
     const stored = localStorage.getItem(getStorageKey(projectId))
     if (stored) {
       const parsed = JSON.parse(stored)
+      // Boards saved before columns were configurable only knew how to collapse
+      // Planning. Carry that choice forward rather than silently losing it.
+      const collapsedColumns = Array.isArray(parsed.collapsedColumns)
+        ? toStringArray(parsed.collapsedColumns)
+        : parsed.planningCollapsed
+        ? ['planning']
+        : []
       return {
         viewMode: parsed.viewMode === 'condensed' ? 'condensed' : 'normal',
-        planningCollapsed: Boolean(parsed.planningCollapsed),
-        collapsedEpics: Array.isArray(parsed.collapsedEpics) ? parsed.collapsedEpics : [],
+        collapsedColumns,
+        collapsedEpics: toStringArray(parsed.collapsedEpics),
       }
     }
   } catch {
     // Invalid JSON, return defaults
   }
 
-  return {
-    viewMode: 'normal',
-    planningCollapsed: false,
-    collapsedEpics: [],
-  }
+  return { ...DEFAULTS }
 }
 
 export function useBoardPreferences(projectId: string) {
@@ -62,8 +69,26 @@ export function useBoardPreferences(projectId: string) {
     setPreferences(prev => ({ ...prev, viewMode }))
   }, [])
 
-  const setPlanningCollapsed = useCallback((planningCollapsed: boolean) => {
-    setPreferences(prev => ({ ...prev, planningCollapsed }))
+  const toggleColumnCollapse = useCallback((columnId: string) => {
+    setPreferences(prev => {
+      const collapsedColumns = prev.collapsedColumns.includes(columnId)
+        ? prev.collapsedColumns.filter(id => id !== columnId)
+        : [...prev.collapsedColumns, columnId]
+      return { ...prev, collapsedColumns }
+    })
+  }, [])
+
+  const expandAllColumns = useCallback(() => {
+    setPreferences(prev => (prev.collapsedColumns.length === 0 ? prev : { ...prev, collapsedColumns: [] }))
+  }, [])
+
+  // Drop remembered ids for columns that no longer exist, so a deleted column
+  // cannot keep a slot reserved in localStorage forever.
+  const pruneCollapsedColumns = useCallback((existingIds: string[]) => {
+    setPreferences(prev => {
+      const kept = prev.collapsedColumns.filter(id => existingIds.includes(id))
+      return kept.length === prev.collapsedColumns.length ? prev : { ...prev, collapsedColumns: kept }
+    })
   }, [])
 
   const toggleEpicCollapse = useCallback((epicId: string) => {
@@ -82,10 +107,12 @@ export function useBoardPreferences(projectId: string) {
 
   return {
     viewMode: preferences.viewMode,
-    planningCollapsed: preferences.planningCollapsed,
+    collapsedColumns: new Set(preferences.collapsedColumns),
     collapsedEpics: new Set(preferences.collapsedEpics),
     setViewMode,
-    setPlanningCollapsed,
+    toggleColumnCollapse,
+    expandAllColumns,
+    pruneCollapsedColumns,
     toggleEpicCollapse,
     isEpicCollapsed,
   }

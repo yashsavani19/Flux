@@ -110,14 +110,14 @@ export function Auth({ token: urlToken }: AuthProps) {
       <div class="min-h-screen bg-base-200 flex items-center justify-center">
         <div class="card w-96 bg-base-100 shadow-xl">
           <div class="card-body">
-            <h2 class="card-title text-2xl mb-4">Login Required</h2>
+            <h2 class="card-title text-2xl mb-4">Login required</h2>
             <p class="text-sm opacity-70 mb-4">
               Enter your API key to authorize this CLI session.
             </p>
             <form onSubmit={handleLogin}>
               <div class="form-control mb-4">
                 <label class="label">
-                  <span class="label-text">API Key</span>
+                  <span class="label-text">API key</span>
                 </label>
                 <input
                   type="password"
@@ -240,11 +240,11 @@ export function Auth({ token: urlToken }: AuthProps) {
           <form onSubmit={handleSubmit}>
             <div class="form-control mb-4">
               <label class="label">
-                <span class="label-text">Key Name *</span>
+                <span class="label-text">Key name *</span>
               </label>
               <input
                 type="text"
-                placeholder="My CLI Key"
+                placeholder="My CLI key"
                 class="input input-bordered w-full"
                 value={name}
                 onInput={(e) => setName((e.target as HTMLInputElement).value)}
@@ -254,7 +254,7 @@ export function Auth({ token: urlToken }: AuthProps) {
 
             <div class="form-control mb-4">
               <label class="label">
-                <span class="label-text">Access Scope</span>
+                <span class="label-text">Access scope</span>
               </label>
               <select
                 class="select select-bordered w-full"
@@ -269,7 +269,7 @@ export function Auth({ token: urlToken }: AuthProps) {
             {scope === 'project' && (
               <div class="form-control mb-4">
                 <label class="label">
-                  <span class="label-text">Select Projects</span>
+                  <span class="label-text">Select projects</span>
                 </label>
                 <div class="max-h-40 overflow-y-auto border rounded-lg p-2">
                   {projects.length === 0 ? (

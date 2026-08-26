@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import { route, RoutableProps } from "preact-router";
 import {
   DndContext,
@@ -9,6 +9,7 @@ import {
   closestCenter,
 } from "@dnd-kit/core";
 import {
+  API_ORIGIN,
   getProject,
   getTasks,
   getEpics,
@@ -18,23 +19,23 @@ import {
   type TaskWithBlocked,
 } from "../stores";
 import type { Epic } from "@flux/shared";
-import { STATUSES, STATUS_CONFIG, EPIC_COLORS } from "@flux/shared";
+import { EPIC_COLORS } from "@flux/shared";
 import {
   TaskForm,
   EpicForm,
-  DraggableTaskCard,
-  DroppableColumn,
+  BoardColumns,
+  ManageColumnsModal,
   ThemeToggle,
 } from "../components";
 import { useBoardPreferences } from "../hooks/useBoardPreferences";
+import { useProjectColumns } from "../hooks/useProjectColumns";
 import {
   ArrowLeftIcon,
   Bars3BottomLeftIcon,
   ChevronRightIcon,
+  ExclamationTriangleIcon,
   EyeIcon,
-  EyeSlashIcon,
   MagnifyingGlassIcon,
-  PlusIcon,
   Squares2X2Icon,
   ViewColumnsIcon,
 } from "@heroicons/react/24/outline";
@@ -58,6 +59,7 @@ export function Board({ projectId }: BoardProps) {
   // Modal state
   const [taskFormOpen, setTaskFormOpen] = useState(false);
   const [epicFormOpen, setEpicFormOpen] = useState(false);
+  const [manageColumnsOpen, setManageColumnsOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskWithBlocked | undefined>(
     undefined
   );
@@ -76,13 +78,23 @@ export function Board({ projectId }: BoardProps) {
   const [cleanupArchiveTasks, setCleanupArchiveTasks] = useState(true);
   const [cleanupArchiveEpics, setCleanupArchiveEpics] = useState(true);
 
+  // This project's board columns
+  const {
+    columns,
+    error: columnsError,
+    reload: reloadColumns,
+    applySaved: applySavedColumns,
+  } = useProjectColumns(projectId ?? "");
+
   // Board preferences (persisted to localStorage)
   const {
     viewMode,
-    planningCollapsed,
+    collapsedColumns,
     collapsedEpics,
     setViewMode,
-    setPlanningCollapsed,
+    toggleColumnCollapse,
+    expandAllColumns,
+    pruneCollapsedColumns,
     toggleEpicCollapse,
   } = useBoardPreferences(projectId ?? "");
 
@@ -103,9 +115,14 @@ export function Board({ projectId }: BoardProps) {
     loadProject();
   }, [projectId]);
 
+  // A column that no longer exists must not keep a slot in the saved preferences.
+  useEffect(() => {
+    pruneCollapsedColumns(columns.map((c) => c.id));
+  }, [columns, pruneCollapsedColumns]);
+
   useEffect(() => {
     if (!projectId) return;
-    const eventsBase = import.meta.env.DEV ? "http://localhost:3000" : "";
+    const eventsBase = API_ORIGIN;
     let source: EventSource | null = null;
     let refreshTimeout: number | null = null;
     let reconnectTimeout: number | null = null;
@@ -246,8 +263,27 @@ export function Board({ projectId }: BoardProps) {
     await refreshData();
   };
 
-  // Get count of done tasks (for archive button)
-  const doneTaskCount = tasks.filter((t) => t.status === "done").length;
+  // Count of finished tasks (for the archive dialog). "Finished" is whatever
+  // this board's columns say it is, not a hardcoded 'done'.
+  const doneTaskCount = useMemo(() => {
+    const doneIds = new Set(
+      columns.filter((c) => c.role === "done").map((c) => c.id)
+    );
+    return tasks.filter((t) => doneIds.has(t.status)).length;
+  }, [tasks, columns]);
+
+  // Tasks per column, used by the manage dialog to say what a delete will move.
+  const taskCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const task of tasks) {
+      counts[task.status] = (counts[task.status] ?? 0) + 1;
+    }
+    return counts;
+  }, [tasks]);
+
+  const hiddenColumnCount = columns.filter((c) =>
+    collapsedColumns.has(c.id)
+  ).length;
 
   // Filter tasks
   const filterTask = (task: TaskWithBlocked): boolean => {
@@ -263,9 +299,9 @@ export function Board({ projectId }: BoardProps) {
   };
 
   // Get tasks for a specific column and epic
-  const getColumnTasks = (status: string, epicId: string | undefined) =>
+  const getColumnTasks = (columnId: string, epicId: string | undefined) =>
     tasks
-      .filter((t) => t.epic_id === epicId && t.status === status)
+      .filter((t) => t.epic_id === epicId && t.status === columnId)
       .filter(filterTask);
 
   // Get task count for an epic
@@ -273,8 +309,8 @@ export function Board({ projectId }: BoardProps) {
     tasks.filter((t) => t.epic_id === epicId).filter(filterTask).length;
 
   // Generate drop zone ID
-  const getDropZoneId = (status: string, epicId: string | undefined) =>
-    `${status}:${epicId ?? "unassigned"}`;
+  const getDropZoneId = (columnId: string, epicId: string | undefined) =>
+    `${columnId}:${epicId ?? "unassigned"}`;
 
   // Get total task count
   const totalTaskCount = tasks.filter(filterTask).length;
@@ -314,19 +350,32 @@ export function Board({ projectId }: BoardProps) {
               class="btn btn-primary btn-sm"
               onClick={() => openNewTask()}
             >
-              New Task
+              New task
             </button>
             <button class="btn btn-neutral btn-sm" onClick={openNewEpic}>
-              New Epic
+              New epic
             </button>
           </div>
         </div>
 
         <div class="px-6 pb-0">
+          {columnsError && (
+            <div class="alert alert-warning mb-4 text-sm">
+              <ExclamationTriangleIcon className="h-5 w-5 flex-shrink-0" />
+              <span>
+                This board’s columns could not be loaded ({columnsError}). The
+                standard four are shown instead.
+              </span>
+              <button class="btn btn-sm btn-ghost" onClick={reloadColumns}>
+                Try again
+              </button>
+            </div>
+          )}
+
           {/* Filter Bar */}
           <div class="bg-base-100 rounded-xl p-4 shadow-sm mb-6">
-            <div class="flex items-center gap-4">
-              <div class="relative flex-1 max-w-sm">
+            <div class="flex items-center gap-4 flex-wrap">
+              <div class="relative flex-1 min-w-48 max-w-sm">
                 <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-base-content/40" />
                 <input
                   type="text"
@@ -345,7 +394,7 @@ export function Board({ projectId }: BoardProps) {
                   setFilterEpicId((e.target as HTMLSelectElement).value)
                 }
               >
-                <option value="all">All Epics</option>
+                <option value="all">All epics</option>
                 {epics.map((epic) => (
                   <option key={epic.id} value={epic.id}>
                     {epic.title}
@@ -360,10 +409,10 @@ export function Board({ projectId }: BoardProps) {
                   setFilterStatus((e.target as HTMLSelectElement).value)
                 }
               >
-                <option value="all">All Statuses</option>
-                {STATUSES.map((status) => (
-                  <option key={status} value={status}>
-                    {STATUS_CONFIG[status].label}
+                <option value="all">All columns</option>
+                {columns.map((column) => (
+                  <option key={column.id} value={column.id}>
+                    {column.label}
                   </option>
                 ))}
               </select>
@@ -384,10 +433,28 @@ export function Board({ projectId }: BoardProps) {
               <div class="flex-1" />
               <button
                 class="btn btn-ghost btn-sm"
+                onClick={() => setManageColumnsOpen(true)}
+                title="Add, rename, reorder or remove board columns"
+              >
+                <ViewColumnsIcon className="h-4 w-4" />
+                Manage columns
+              </button>
+              {hiddenColumnCount > 0 && (
+                <button
+                  class="btn btn-ghost btn-sm"
+                  onClick={expandAllColumns}
+                  title="Show every hidden column again"
+                >
+                  <EyeIcon className="h-4 w-4" />
+                  Show all columns ({hiddenColumnCount} hidden)
+                </button>
+              )}
+              <button
+                class="btn btn-ghost btn-sm"
                 onClick={() => setCleanupDialogOpen(true)}
                 title="Clean up board"
               >
-                Clean Up
+                Clean up
               </button>
               {/* View Toggle */}
               <div class="join">
@@ -410,25 +477,6 @@ export function Board({ projectId }: BoardProps) {
                   <Bars3BottomLeftIcon className="h-4 w-4" />
                 </button>
               </div>
-              {/* Planning Column Toggle */}
-              <button
-                class={`btn btn-sm ${
-                  planningCollapsed ? "btn-ghost" : "btn-ghost"
-                }`}
-                onClick={() => setPlanningCollapsed(!planningCollapsed)}
-                title={
-                  planningCollapsed
-                    ? "Show Planning column"
-                    : "Hide Planning column"
-                }
-                >
-                  {planningCollapsed ? (
-                  <EyeSlashIcon className="h-4 w-4" />
-                ) : (
-                  <EyeIcon className="h-4 w-4" />
-                )}
-                <span class="ml-1 text-xs">Show Planning</span>
-              </button>
             </div>
           </div>
         </div>
@@ -497,109 +545,20 @@ export function Board({ projectId }: BoardProps) {
                   {/* Epic Content */}
                   {!isCollapsed && (
                     <div class="px-4 pb-4">
-                      <div class="flex gap-4">
-                        {/* Collapsed Planning Column */}
-                        {planningCollapsed && (
-                          <div
-                            class="w-8 min-h-[100px] bg-base-200 rounded-lg flex items-center justify-center cursor-pointer hover:bg-base-300 transition-colors relative"
-                            onClick={() => setPlanningCollapsed(false)}
-                            title="Show Planning column"
-                          >
-                            <div class="absolute inset-0 flex items-center justify-center">
-                              <span
-                                class="text-xs font-medium text-base-content/60 whitespace-nowrap"
-                                style={{ transform: "rotate(-90deg)" }}
-                              >
-                                Planning (
-                                {getColumnTasks("planning", epic.id).length})
-                              </span>
-                            </div>
-                            <EyeSlashIcon className="h-4 w-4 text-base-content/40 absolute top-2" />
-                          </div>
-                        )}
-
-                        {/* Main Columns Container */}
-                        <div class="flex-1">
-                          {/* Column Headers */}
-                          <div
-                            class={`grid ${
-                              planningCollapsed ? "grid-cols-3" : "grid-cols-4"
-                            } gap-4 mb-3`}
-                          >
-                            {STATUSES.filter(
-                              (s) => !planningCollapsed || s !== "planning"
-                            ).map((status) => {
-                              const config = STATUS_CONFIG[status];
-                              const count = getColumnTasks(
-                                status,
-                                epic.id
-                              ).length;
-                              return (
-                                <div
-                                  key={status}
-                                  class="flex items-center gap-2"
-                                >
-                                  <span
-                                    class="w-2 h-2 rounded-full"
-                                    style={{ backgroundColor: config.color }}
-                                  />
-                                  <span class="font-medium text-sm">
-                                    {config.label}
-                                  </span>
-                                  <span class="text-base-content/40 text-sm">
-                                    {count}
-                                  </span>
-                                  {status === "planning" && (
-                                    <button
-                                      class="ml-auto w-5 h-5 rounded flex items-center justify-center text-base-content/40 hover:text-base-content/70 hover:bg-base-200 transition-colors"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        openNewTask(epic.id);
-                                      }}
-                                      title="Add task to this epic"
-                                    >
-                                      <PlusIcon className="h-4 w-4" />
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          {/* Columns */}
-                          <div
-                            class={`grid ${
-                              planningCollapsed ? "grid-cols-3" : "grid-cols-4"
-                            } gap-4`}
-                          >
-                            {STATUSES.filter(
-                              (s) => !planningCollapsed || s !== "planning"
-                            ).map((status) => (
-                              <DroppableColumn
-                                key={getDropZoneId(status, epic.id)}
-                                id={getDropZoneId(status, epic.id)}
-                                isEmpty={
-                                  getColumnTasks(status, epic.id).length === 0
-                                }
-                              >
-                                {getColumnTasks(status, epic.id).map(
-                                  (task, taskIndex) => (
-                                    <DraggableTaskCard
-                                      key={task.id}
-                                      task={task}
-                                      epicColor={epicColor}
-                                      epicTitle={epic.title}
-                                      taskNumber={taskIndex + 1}
-                                      onClick={() => openEditTask(task)}
-                                      condensed={viewMode === "condensed"}
-                                    />
-                                  )
-                                )}
-                              </DroppableColumn>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
+                      <BoardColumns
+                        columns={columns}
+                        collapsedColumns={collapsedColumns}
+                        onToggleCollapse={toggleColumnCollapse}
+                        epicId={epic.id}
+                        epicColor={epicColor}
+                        epicTitle={epic.title}
+                        condensed={viewMode === "condensed"}
+                        getColumnTasks={getColumnTasks}
+                        getDropZoneId={getDropZoneId}
+                        onTaskClick={openEditTask}
+                        onAddTask={() => openNewTask(epic.id)}
+                        addTaskTitle="Add task to this epic"
+                      />
                     </div>
                   )}
                 </div>
@@ -628,104 +587,20 @@ export function Board({ projectId }: BoardProps) {
 
               {!collapsedEpics.has("unassigned") && (
                 <div class="px-4 pb-4">
-                  <div class="flex gap-4">
-                    {/* Collapsed Planning Column */}
-                    {planningCollapsed && (
-                      <div
-                        class="w-8 min-h-[100px] bg-base-200 rounded-lg flex items-center justify-center cursor-pointer hover:bg-base-300 transition-colors relative"
-                        onClick={() => setPlanningCollapsed(false)}
-                        title="Show Planning column"
-                      >
-                        <div class="absolute inset-0 flex items-center justify-center">
-                          <span
-                            class="text-xs font-medium text-base-content/60 whitespace-nowrap"
-                            style={{ transform: "rotate(-90deg)" }}
-                          >
-                            Planning (
-                            {getColumnTasks("planning", undefined).length})
-                          </span>
-                        </div>
-                        <EyeSlashIcon className="h-4 w-4 text-base-content/40 absolute top-2" />
-                      </div>
-                    )}
-
-                    {/* Main Columns Container */}
-                    <div class="flex-1">
-                      <div
-                        class={`grid ${
-                          planningCollapsed ? "grid-cols-3" : "grid-cols-4"
-                        } gap-4 mb-3`}
-                      >
-                        {STATUSES.filter(
-                          (s) => !planningCollapsed || s !== "planning"
-                        ).map((status) => {
-                          const config = STATUS_CONFIG[status];
-                          const count = getColumnTasks(
-                            status,
-                            undefined
-                          ).length;
-                          return (
-                            <div key={status} class="flex items-center gap-2">
-                              <span
-                                class="w-2 h-2 rounded-full"
-                                style={{ backgroundColor: config.color }}
-                              />
-                              <span class="font-medium text-sm">
-                                {config.label}
-                              </span>
-                              <span class="text-base-content/40 text-sm">
-                                {count}
-                              </span>
-                              {status === "planning" && (
-                                <button
-                                  class="ml-auto w-5 h-5 rounded flex items-center justify-center text-base-content/40 hover:text-base-content/70 hover:bg-base-200 transition-colors"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openNewTask(undefined);
-                                  }}
-                                  title="Add unassigned task"
-                                >
-                                  <PlusIcon className="h-4 w-4" />
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      <div
-                        class={`grid ${
-                          planningCollapsed ? "grid-cols-3" : "grid-cols-4"
-                        } gap-4`}
-                      >
-                        {STATUSES.filter(
-                          (s) => !planningCollapsed || s !== "planning"
-                        ).map((status) => (
-                          <DroppableColumn
-                            key={getDropZoneId(status, undefined)}
-                            id={getDropZoneId(status, undefined)}
-                            isEmpty={
-                              getColumnTasks(status, undefined).length === 0
-                            }
-                          >
-                            {getColumnTasks(status, undefined).map(
-                              (task, taskIndex) => (
-                                <DraggableTaskCard
-                                  key={task.id}
-                                  task={task}
-                                  epicColor="#9ca3af"
-                                  epicTitle="Unassigned"
-                                  taskNumber={taskIndex + 1}
-                                  onClick={() => openEditTask(task)}
-                                  condensed={viewMode === "condensed"}
-                                />
-                              )
-                            )}
-                          </DroppableColumn>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
+                  <BoardColumns
+                    columns={columns}
+                    collapsedColumns={collapsedColumns}
+                    onToggleCollapse={toggleColumnCollapse}
+                    epicId={undefined}
+                    epicColor="#9ca3af"
+                    epicTitle="Unassigned"
+                    condensed={viewMode === "condensed"}
+                    getColumnTasks={getColumnTasks}
+                    getDropZoneId={getDropZoneId}
+                    onTaskClick={openEditTask}
+                    onAddTask={() => openNewTask(undefined)}
+                    addTaskTitle="Add unassigned task"
+                  />
                 </div>
               )}
             </div>
@@ -748,12 +623,24 @@ export function Board({ projectId }: BoardProps) {
           epic={editingEpic}
           projectId={projectId!}
         />
+        <ManageColumnsModal
+          isOpen={manageColumnsOpen}
+          onClose={() => setManageColumnsOpen(false)}
+          projectId={projectId!}
+          columns={columns}
+          taskCounts={taskCounts}
+          loadError={columnsError}
+          onSaved={async (saved) => {
+            applySavedColumns(saved);
+            await refreshData();
+          }}
+        />
 
         {/* Cleanup Dialog */}
         {cleanupDialogOpen && (
           <div class="modal modal-open">
             <div class="modal-box">
-              <h3 class="font-bold text-lg">Clean Up Board</h3>
+              <h3 class="font-bold text-lg">Clean up board</h3>
               <div class="py-4 space-y-3">
                 <label class="flex items-center gap-3 cursor-pointer">
                   <input
@@ -766,7 +653,7 @@ export function Board({ projectId }: BoardProps) {
                       )
                     }
                   />
-                  <span>Archive Done Tasks</span>
+                  <span>Archive finished tasks</span>
                   {doneTaskCount > 0 && (
                     <span class="text-base-content/50 text-sm">
                       ({doneTaskCount} task{doneTaskCount !== 1 ? "s" : ""})
@@ -784,7 +671,7 @@ export function Board({ projectId }: BoardProps) {
                       )
                     }
                   />
-                  <span>Archive Empty Epics</span>
+                  <span>Archive empty epics</span>
                 </label>
               </div>
               <div class="modal-action">

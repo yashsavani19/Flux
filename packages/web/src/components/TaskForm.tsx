@@ -8,6 +8,7 @@ import {
   deleteTask,
   addTaskComment,
   deleteTaskComment,
+  getColumns,
   getEpics,
   getTasks,
   uploadBlob,
@@ -16,8 +17,14 @@ import {
   getBlobContentUrl,
   type TaskWithBlocked,
 } from "../stores";
-import type { Task, Epic, Status, TaskComment, Guardrail, Blob as FluxBlob } from "@flux/shared";
-import { STATUSES, STATUS_CONFIG } from "@flux/shared";
+import type { Task, Epic, Column, TaskComment, Guardrail, Blob as FluxBlob } from "@flux/shared";
+import { DEFAULT_COLUMNS } from "@flux/shared";
+
+// Where a brand-new task lands if the form ever needs to name a column itself:
+// the first column that means "ready to start", falling back to the leftmost.
+function defaultColumnId(columns: Column[]): string {
+  return (columns.find((c) => c.role === "ready") ?? columns[0])?.id ?? "todo";
+}
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -46,6 +53,7 @@ export function TaskForm({
   const [status, setStatus] = useState<string>("todo");
   const [epicId, setEpicId] = useState<string>("");
   const [epics, setEpics] = useState<Epic[]>([]);
+  const [columns, setColumns] = useState<Column[]>(DEFAULT_COLUMNS);
   const [dependsOn, setDependsOn] = useState<string[]>([]);
   const [availableTasks, setAvailableTasks] = useState<TaskWithBlocked[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -66,6 +74,11 @@ export function TaskForm({
 
   const isEdit = !!task;
 
+  // A task can sit in a column this form has not loaded (an agent moved it, or
+  // the columns failed to load) - show the raw id rather than nothing.
+  const columnLabel = (columnId: string) =>
+    columns.find((c) => c.id === columnId)?.label ?? columnId;
+
   useEffect(() => {
     if (isOpen) {
       setDeleteConfirmOpen(false);
@@ -78,11 +91,13 @@ export function TaskForm({
   }, [isOpen, task, projectId, defaultEpicId]);
 
   const loadFormData = async () => {
-    const [epicsData, tasksData] = await Promise.all([
+    const [epicsData, tasksData, columnsData] = await Promise.all([
       getEpics(projectId),
       getTasks(projectId),
+      getColumns(projectId).catch(() => DEFAULT_COLUMNS),
     ]);
     setEpics(epicsData);
+    setColumns(columnsData);
     setAvailableTasks(
       task ? tasksData.filter((t) => t.id !== task.id) : tasksData
     );
@@ -104,7 +119,7 @@ export function TaskForm({
       setBlobs(blobsData);
     } else {
       setTitle("");
-      setStatus("todo");
+      setStatus(defaultColumnId(columnsData));
       setEpicId(defaultEpicId || "");
       setDependsOn([]);
       setComments([]);
@@ -262,7 +277,7 @@ export function TaskForm({
       <Modal
         isOpen={isOpen}
         onClose={onClose}
-        title={isEdit ? "Edit Task" : "New Task"}
+        title={isEdit ? "Edit task" : "New task"}
         boxClassName="!w-[70vw] !max-w-none"
       >
         <form onSubmit={handleSubmit}>
@@ -294,9 +309,12 @@ export function TaskForm({
                     setStatus((e.target as HTMLSelectElement).value)
                   }
                 >
-                  {STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {STATUS_CONFIG[s].label}
+                  {!columns.some((c) => c.id === status) && (
+                    <option value={status}>{status}</option>
+                  )}
+                  {columns.map((column) => (
+                    <option key={column.id} value={column.id}>
+                      {column.label}
                     </option>
                   ))}
                 </select>
@@ -306,7 +324,7 @@ export function TaskForm({
             {isEdit && (
               <div class="form-control mb-4">
                 <label class="label">
-                  <span class="label-text">External Blocker</span>
+                  <span class="label-text">External blocker</span>
                   {blockedReason && (
                     <span class="badge badge-warning badge-sm">Blocked</span>
                   )}
@@ -394,8 +412,7 @@ export function TaskForm({
                           />
                           <span class="text-sm truncate flex-1">{t.title}</span>
                           <span class="badge badge-ghost badge-xs">
-                            {STATUS_CONFIG[t.status as Status]?.label ||
-                              t.status}
+                            {columnLabel(t.status)}
                           </span>
                         </label>
                       ))}
@@ -409,7 +426,7 @@ export function TaskForm({
             {/* Acceptance Criteria */}
             <div class="form-control mb-4">
               <label class="label">
-                <span class="label-text">Acceptance Criteria</span>
+                <span class="label-text">Acceptance criteria</span>
                 {acceptanceCriteria.length > 0 && (
                   <span class="label-text-alt">{acceptanceCriteria.length}</span>
                 )}
@@ -656,7 +673,7 @@ export function TaskForm({
                         {commentSubmitting ? (
                           <span class="loading loading-spinner loading-xs"></span>
                         ) : (
-                          "Add Comment"
+                          "Add comment"
                         )}
                       </button>
                     </div>
@@ -699,7 +716,7 @@ export function TaskForm({
       </Modal>
       <ConfirmModal
         isOpen={deleteConfirmOpen}
-        title="Delete Task?"
+        title="Delete task?"
         description="This action cannot be undone."
         confirmLabel="Delete"
         confirmClassName="btn-error"
@@ -711,7 +728,7 @@ export function TaskForm({
       />
       <ConfirmModal
         isOpen={!!deleteCommentId}
-        title="Delete Comment?"
+        title="Delete comment?"
         description="This action cannot be undone."
         confirmLabel="Delete"
         confirmClassName="btn-error"

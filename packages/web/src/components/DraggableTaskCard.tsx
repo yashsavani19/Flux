@@ -1,10 +1,12 @@
 import { ArrowDownIcon, CheckCircleIcon, PaperClipIcon, ShieldCheckIcon } from '@heroicons/react/24/outline'
 import { useDraggable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
+import type { Column, ColumnRole } from '@flux/shared'
 import type { TaskWithBlocked } from '../stores'
 
 interface DraggableTaskCardProps {
   task: TaskWithBlocked
+  column?: Column
   epicColor?: string
   epicTitle?: string
   taskNumber?: number
@@ -12,8 +14,24 @@ interface DraggableTaskCardProps {
   condensed?: boolean
 }
 
+// How far through the work a card in this kind of column is. `undefined` means
+// an indeterminate bar - work is in flight with no meaningful percentage.
+const PROGRESS_BY_ROLE: Record<ColumnRole, { className: string; value?: number }> = {
+  backlog: { className: 'progress-secondary', value: 0 },
+  ready: { className: '', value: 0 },
+  active: { className: 'progress-warning' },
+  done: { className: 'progress-success', value: 100 },
+}
+
+// A badge tinted with the column's own colour, so a custom column reads the
+// same on a card as it does in the board header.
+function columnBadgeStyle(color: string) {
+  return { backgroundColor: `${color}26`, color, borderColor: 'transparent' }
+}
+
 export function DraggableTaskCard({
   task,
+  column,
   epicColor = '#9ca3af',
   epicTitle = 'Unassigned',
   taskNumber,
@@ -35,6 +53,19 @@ export function DraggableTaskCard({
       onClick()
     }
   }
+
+  const progress = column ? PROGRESS_BY_ROLE[column.role] : undefined
+  // Only a column whose role is 'active' has agents on it.
+  const showWorkers = column?.role === 'active' && task.workers && task.workers.length > 0
+
+  const renderProgress = (width: string) =>
+    progress ? (
+      <progress
+        class={`progress ${progress.className} ${width} flex-shrink-0`}
+        value={progress.value}
+        max={progress.value === undefined ? undefined : 100}
+      />
+    ) : null
 
   // Shared indicator badges for acceptance criteria and guardrails
   const renderMetaIndicators = (compact = false) => (
@@ -89,23 +120,11 @@ export function DraggableTaskCard({
             </span>
           )}
           {renderMetaIndicators(true)}
-          {task.status === 'planning' && (
-            <progress class="progress progress-secondary w-8 flex-shrink-0" value={0} max={100} />
-          )}
-          {task.status === 'todo' && (
-            <progress class="progress w-8 flex-shrink-0" value={0} max={100} />
-          )}
-          {task.status === 'in_progress' && (
-            <>
-              <progress class="progress progress-warning w-8 flex-shrink-0" />
-              {task.workers && task.workers.length > 0 && task.workers.map(name => (
-                <span key={name} class="badge badge-primary badge-xs flex-shrink-0">{name}</span>
-              ))}
-            </>
-          )}
-          {task.status === 'done' && (
-            <progress class="progress progress-success w-8 flex-shrink-0" value={100} max={100} />
-          )}
+          {renderProgress('w-8')}
+          {showWorkers &&
+            task.workers!.map(name => (
+              <span key={name} class="badge badge-primary badge-xs flex-shrink-0">{name}</span>
+            ))}
         </div>
       </div>
     )
@@ -152,35 +171,20 @@ export function DraggableTaskCard({
       )}
 
       {/* Footer */}
-      <div class="flex items-center justify-between mt-auto pt-2">
-        <div class="flex items-center gap-2">
-          {task.status === 'planning' && (
-            <>
-              <progress class="progress progress-secondary w-10" value={0} max={100} />
-              <span class="badge badge-ghost badge-secondary badge-xs">Planning</span>
-            </>
+      <div class="flex items-center justify-between mt-auto pt-2 gap-2">
+        <div class="flex items-center gap-2 min-w-0 flex-wrap">
+          {renderProgress('w-10')}
+          {column ? (
+            <span class="badge badge-xs max-w-32 truncate" style={columnBadgeStyle(column.color)}>
+              {column.label}
+            </span>
+          ) : (
+            <span class="badge badge-ghost badge-xs max-w-32 truncate">{task.status}</span>
           )}
-          {task.status === 'todo' && (
-            <>
-              <progress class="progress w-10" value={0} max={100} />
-              <span class="badge badge-ghost badge-xs">To do</span>
-            </>
-          )}
-          {task.status === 'in_progress' && (
-            <>
-              <progress class="progress progress-warning w-10" />
-              <span class="badge badge-ghost badge-warning badge-xs">Agent working</span>
-              {task.workers && task.workers.map(name => (
-                <span key={name} class="badge badge-primary badge-xs">{name}</span>
-              ))}
-            </>
-          )}
-          {task.status === 'done' && (
-            <>
-              <progress class="progress progress-success w-10" value={100} max={100} />
-              <span class="badge badge-ghost badge-success badge-xs">Done</span>
-            </>
-          )}
+          {showWorkers &&
+            task.workers!.map(name => (
+              <span key={name} class="badge badge-primary badge-xs">{name}</span>
+            ))}
           {task.depends_on.length > 0 && (
             <div class={`flex items-center gap-1 text-xs ${task.blocked ? 'text-warning' : 'text-base-content/40'}`}>
               <ArrowDownIcon className="h-3.5 w-3.5" />
@@ -192,7 +196,7 @@ export function DraggableTaskCard({
 
         {/* Task Number */}
         {taskNumber && (
-          <span class="text-xs text-base-content/40">#{taskNumber}</span>
+          <span class="text-xs text-base-content/40 flex-shrink-0">#{taskNumber}</span>
         )}
       </div>
     </div>

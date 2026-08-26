@@ -1,11 +1,14 @@
+import type { Column } from '@flux/shared'
 import type { TaskWithBlocked } from '../stores'
 
 interface TaskCardProps {
   task: TaskWithBlocked
+  /** The column the task currently sits in, so custom columns read correctly. */
+  column?: Column
   onClick?: () => void
 }
 
-export function TaskCard({ task, onClick }: TaskCardProps) {
+export function TaskCard({ task, column, onClick }: TaskCardProps) {
   return (
     <div
       class="card bg-base-100 shadow-sm mb-2 cursor-pointer hover:shadow-md transition-shadow"
@@ -40,10 +43,10 @@ export function TaskCard({ task, onClick }: TaskCardProps) {
             All {task.depends_on.length} dep{task.depends_on.length > 1 ? 's' : ''} done
           </div>
         )}
-        {task.status === 'in_progress' && (
+        {column?.role === 'active' && (
           <div class="mt-2 flex items-center gap-1 text-xs text-primary">
             <span class="loading loading-spinner loading-xs text-primary" />
-            In progress
+            {column.label}
           </div>
         )}
       </div>

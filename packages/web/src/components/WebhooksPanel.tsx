@@ -269,9 +269,9 @@ export function WebhooksPanel() {
                   <div class={`mt-3 p-3 rounded-lg ${testResult.result.success ? 'bg-success/10' : 'bg-error/10'}`}>
                     <div class="flex items-center gap-2 mb-1">
                       {testResult.result.success ? (
-                        <span class="text-success font-medium">Test Successful</span>
+                        <span class="text-success font-medium">Test successful</span>
                       ) : (
-                        <span class="text-error font-medium">Test Failed</span>
+                        <span class="text-error font-medium">Test failed</span>
                       )}
                       {testResult.result.status_code && (
                         <span class="badge badge-sm">HTTP {testResult.result.status_code}</span>
@@ -294,7 +294,7 @@ export function WebhooksPanel() {
         </div>
       )}
 
-      <Modal isOpen={showForm} title={editingWebhook ? 'Edit Webhook' : 'Create Webhook'} onClose={() => setShowForm(false)}>
+      <Modal isOpen={showForm} title={editingWebhook ? 'Edit webhook' : 'Create webhook'} onClose={() => setShowForm(false)}>
         <form onSubmit={handleSubmit} class="space-y-4">
           <div class="form-control">
             <label class="label">
@@ -305,7 +305,7 @@ export function WebhooksPanel() {
               class="input input-bordered w-full"
               value={formName}
               onInput={(e) => setFormName((e.target as HTMLInputElement).value)}
-              placeholder="My Webhook"
+              placeholder="My webhook"
               required
             />
           </div>
@@ -328,7 +328,7 @@ export function WebhooksPanel() {
             <label class="label">
               <span class="label-text">Events</span>
               <span class="label-text-alt">
-                <button type="button" class="link link-primary text-xs" onClick={selectAllEvents}>Select All</button>
+                <button type="button" class="link link-primary text-xs" onClick={selectAllEvents}>Select all</button>
                 {' | '}
                 <button type="button" class="link link-primary text-xs" onClick={clearAllEvents}>Clear</button>
               </span>
@@ -367,7 +367,7 @@ export function WebhooksPanel() {
 
           <div class="form-control">
             <label class="label">
-              <span class="label-text">Project Filter (optional)</span>
+              <span class="label-text">Project filter (optional)</span>
               <span class="label-text-alt">Only trigger for this project</span>
             </label>
             <select
@@ -375,7 +375,7 @@ export function WebhooksPanel() {
               value={formProjectId}
               onChange={(e) => setFormProjectId((e.target as HTMLSelectElement).value)}
             >
-              <option value="">All Projects</option>
+              <option value="">All projects</option>
               {projects.map(p => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
@@ -399,7 +399,7 @@ export function WebhooksPanel() {
               Cancel
             </button>
             <button type="submit" class="btn btn-primary" disabled={formEvents.length === 0}>
-              {editingWebhook ? 'Save Changes' : 'Create Webhook'}
+              {editingWebhook ? 'Save changes' : 'Create webhook'}
             </button>
           </div>
         </form>
@@ -407,7 +407,7 @@ export function WebhooksPanel() {
 
       <Modal
         isOpen={!!showDeliveries}
-        title="Recent Deliveries"
+        title="Recent deliveries"
         onClose={() => setShowDeliveries(null)}
       >
         {deliveries.length === 0 ? (
@@ -453,7 +453,7 @@ export function WebhooksPanel() {
 
       <ConfirmModal
         isOpen={!!pendingDeleteWebhook}
-        title="Delete Webhook?"
+        title="Delete webhook?"
         description={
           pendingDeleteWebhook
             ? `Delete webhook "${pendingDeleteWebhook.name}"? This action cannot be undone.`
