@@ -852,8 +852,8 @@ ${c.bold}Commands:${c.reset}
   ${c.cyan}flux task list${c.reset} ${c.green}[project] [--json] [--epic] [--status]${c.reset}
   ${c.cyan}flux task create${c.reset} ${c.green}[project]${c.reset} ${c.yellow}<title>${c.reset} ${c.green}[-P 0|1|2] [-e epic] [--ac ...] [--guardrail ...]${c.reset}
   ${c.cyan}flux task update${c.reset} ${c.yellow}<id>${c.reset} ${c.green}[--title] [--status] [--note] [--epic] [--blocked] [--ac ...] [--guardrail ...]${c.reset}
-  ${c.cyan}flux task done${c.reset} ${c.yellow}<id>${c.reset} ${c.green}[--note]${c.reset}       Mark task done
-  ${c.cyan}flux task start${c.reset} ${c.yellow}<id>${c.reset}               Mark task in_progress
+  ${c.cyan}flux task done${c.reset} ${c.yellow}<id>${c.reset} ${c.green}[--note]${c.reset}       Move task to the first finished column
+  ${c.cyan}flux task start${c.reset} ${c.yellow}<id>${c.reset}               Move task to the first active column
 
 ${c.bold}Blobs:${c.reset}
   ${c.cyan}flux blob attach${c.reset} ${c.yellow}<task-id> <file>${c.reset}  Attach a file to a task

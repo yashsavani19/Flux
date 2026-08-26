@@ -10,6 +10,7 @@ import {
   updateProject as localUpdateProject,
   deleteProject as localDeleteProject,
   getProjectStats as localGetProjectStats,
+  getColumns as localGetColumns,
   getEpics as localGetEpics,
   getEpic as localGetEpic,
   createEpic as localCreateEpic,
@@ -43,6 +44,7 @@ import {
 
 import type {
   Project,
+  Column,
   Epic,
   Task,
   TaskComment,
@@ -59,7 +61,7 @@ import type {
 
 // Re-export types and constants
 export { PRIORITY_CONFIG, PRIORITIES };
-export type { Project, Epic, Task, TaskComment, Priority, Store, Blob, Webhook, WebhookDelivery, WebhookEventType, Guardrail };
+export type { Project, Column, Epic, Task, TaskComment, Priority, Store, Blob, Webhook, WebhookDelivery, WebhookEventType, Guardrail };
 
 // Server response includes computed blocked field
 type TaskWithBlocked = Task & { blocked: boolean };
@@ -179,6 +181,13 @@ export async function getProjectStats(id: string): Promise<{ total: number; done
     return project.stats || { total: 0, done: 0 };
   }
   return localGetProjectStats(id);
+}
+
+export async function getColumns(projectId: string): Promise<Column[]> {
+  if (serverUrl) {
+    return http('GET', `/api/projects/${projectId}/columns`);
+  }
+  return localGetColumns(projectId);
 }
 
 // Epics

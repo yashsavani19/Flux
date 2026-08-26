@@ -2,6 +2,7 @@ import { createHmac } from 'crypto';
 import type { Webhook, WebhookPayload, WebhookEventType } from '@flux/shared';
 import {
   createWebhookDelivery,
+  getReadyColumnId,
   updateWebhookDelivery,
   getWebhookDeliveries,
 } from '@flux/shared';
@@ -137,6 +138,7 @@ export async function testWebhookDelivery(webhook: Webhook): Promise<{
   body?: string;
   error?: string;
 }> {
+  const projectId = 'test-project-id';
   const testPayload: WebhookPayload = {
     event: 'task.created',
     timestamp: new Date().toISOString(),
@@ -145,10 +147,10 @@ export async function testWebhookDelivery(webhook: Webhook): Promise<{
       task: {
         id: 'test-task-id',
         title: 'Test Task',
-        status: 'todo',
+        status: getReadyColumnId(projectId),
         depends_on: [],
         comments: [{ id: 'test', body: 'This is a test webhook delivery', author: 'user', created_at: new Date().toISOString() }],
-        project_id: 'test-project-id',
+        project_id: projectId,
       },
     },
   };

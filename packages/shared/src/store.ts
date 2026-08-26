@@ -238,7 +238,7 @@ export function getProjectStats(projectId: string): { total: number; done: numbe
   const tasks = db.data.tasks.filter(t => t.project_id === projectId && !t.archived);
   return {
     total: tasks.length,
-    done: tasks.filter(t => t.status === 'done').length,
+    done: tasks.filter(isTaskDone).length,
   };
 }
 
@@ -299,7 +299,8 @@ export function deleteColumn(projectId: string, columnId: string, moveTasksTo: s
   if (columnId === moveTasksTo) {
     throw new Error('Choose a different column to move the tasks into.');
   }
-  if (!columns.some(c => c.id === moveTasksTo)) {
+  const targetColumn = columns.find(c => c.id === moveTasksTo);
+  if (!targetColumn) {
     throw new Error(`Column not found: ${moveTasksTo}`);
   }
 
@@ -310,6 +311,9 @@ export function deleteColumn(projectId: string, columnId: string, moveTasksTo: s
   db.data.tasks.forEach(task => {
     if (task.project_id === projectId && task.status === columnId) {
       task.status = moveTasksTo;
+      if (targetColumn.role !== 'active') {
+        task.workers = [];
+      }
       task.updated_at = new Date().toISOString();
     }
   });
@@ -389,7 +393,7 @@ export function createEpic(
   const epic: Epic = {
     id: generateId(),
     title,
-    status: 'planning',
+    status: getDefaultColumnId(projectId),
     depends_on: [],
     notes,
     auto,
@@ -462,7 +466,7 @@ export function createTask(
   const task: Task = {
     id,
     title,
-    status: 'planning',
+    status: getDefaultColumnId(projectId),
     depends_on,
     comments: [],
     epic_id: epicId,
@@ -496,6 +500,9 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id'>>): Task
     ...updates,
     guardrails: updates.guardrails !== undefined ? ensureGuardrailIds(updates.guardrails) : undefined,
   };
+  if (updates.status !== undefined && !isActiveColumn(db.data.tasks[index].project_id, updates.status)) {
+    processedUpdates.workers = [];
+  }
   db.data.tasks[index] = {
     ...db.data.tasks[index],
     ...processedUpdates,
@@ -603,13 +610,13 @@ export function isTaskBlocked(taskId: string): boolean {
   if (task.depends_on.length === 0) return false;
   return task.depends_on.some(depId => {
     const dep = db.data.tasks.find(t => t.id === depId);
-    return dep && dep.status !== 'done';
+    return dep && !isTaskDone(dep);
   });
 }
 
-// Get ready tasks: unblocked, not done, not archived, sorted by priority
+// Get ready tasks: unblocked, not finished, not archived, sorted by priority
 export function getReadyTasks(projectId?: string): Task[] {
-  let tasks = db.data.tasks.filter(t => !t.archived && t.status !== 'done');
+  let tasks = db.data.tasks.filter(t => !t.archived && !isTaskDone(t));
   if (projectId) {
     tasks = tasks.filter(t => t.project_id === projectId);
   }
@@ -629,7 +636,7 @@ export function getReadyTasks(projectId?: string): Task[] {
 export function archiveDoneTasks(projectId: string): number {
   let count = 0;
   db.data.tasks.forEach(task => {
-    if (task.project_id === projectId && task.status === 'done' && !task.archived) {
+    if (task.project_id === projectId && isTaskDone(task) && !task.archived) {
       task.archived = true;
       count++;
     }

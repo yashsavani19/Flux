@@ -4,6 +4,7 @@ import { setupTestEnv, teardownTestEnv, getLogs, getErrors, MOCK_PRIORITY_CONFIG
 vi.mock('../src/client.js', () => ({
   getTasks: vi.fn(),
   getTask: vi.fn(),
+  getColumns: vi.fn(),
   createTask: vi.fn(),
   updateTask: vi.fn(),
   deleteTask: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock('../src/client.js', () => ({
 import {
   getTasks,
   getTask,
+  getColumns,
   createTask,
   updateTask,
   deleteTask,
@@ -26,6 +28,7 @@ import { taskCommand } from '../src/commands/task.js';
 
 const mockGetTasks = getTasks as Mock;
 const mockGetTask = getTask as Mock;
+const mockGetColumns = getColumns as Mock;
 const mockCreateTask = createTask as Mock;
 const mockUpdateTask = updateTask as Mock;
 const mockDeleteTask = deleteTask as Mock;
@@ -36,6 +39,12 @@ describe('task command', () => {
   beforeEach(() => {
     setupTestEnv();
     vi.clearAllMocks();
+    mockGetColumns.mockResolvedValue([
+      { id: 'planning', label: 'Planning', role: 'backlog', order: 0 },
+      { id: 'todo', label: 'To do', role: 'ready', order: 1 },
+      { id: 'in_progress', label: 'In progress', role: 'active', order: 2 },
+      { id: 'done', label: 'Done', role: 'done', order: 3 },
+    ]);
   });
 
   afterEach(() => {
@@ -246,6 +255,7 @@ describe('task command', () => {
 
   describe('done', () => {
     it('marks task as done', async () => {
+      mockGetTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'todo', project_id: 'proj-1' });
       mockUpdateTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'done' });
 
       await taskCommand('done', ['task-1'], {}, false);
@@ -255,6 +265,7 @@ describe('task command', () => {
     });
 
     it('adds comment before marking done', async () => {
+      mockGetTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'todo', project_id: 'proj-1' });
       mockAddTaskComment.mockResolvedValue({ id: 'c-1', body: 'Done note', author: 'user' });
       mockUpdateTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'done' });
 
@@ -265,15 +276,28 @@ describe('task command', () => {
     });
 
     it('exits with error when task not found', async () => {
-      mockUpdateTask.mockResolvedValue(undefined);
+      mockGetTask.mockResolvedValue(undefined);
 
       await expect(taskCommand('done', ['bad-id'], {}, false)).rejects.toThrow('process.exit(1)');
+    });
+
+    it('uses the first custom done-role column', async () => {
+      mockGetTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'review', project_id: 'proj-1' });
+      mockGetColumns.mockResolvedValue([
+        { id: 'queued', label: 'Queued', role: 'ready', order: 0 },
+        { id: 'shipped', label: 'Shipped', role: 'done', order: 1 },
+      ]);
+      mockUpdateTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'shipped' });
+
+      await taskCommand('done', ['task-1'], {}, false);
+
+      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'shipped' });
     });
   });
 
   describe('start', () => {
     it('starts a task', async () => {
-      mockGetTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'todo' });
+      mockGetTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'todo', project_id: 'proj-1' });
       mockUpdateTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'in_progress' });
 
       await taskCommand('start', ['task-1'], {}, false);
@@ -283,10 +307,24 @@ describe('task command', () => {
     });
 
     it('rejects starting a planning task', async () => {
-      mockGetTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'planning' });
+      mockGetTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'planning', project_id: 'proj-1' });
 
       await expect(taskCommand('start', ['task-1'], {}, false)).rejects.toThrow('process.exit(1)');
-      expect(getErrors().some(e => e.includes('planning'))).toBe(true);
+      expect(getErrors().some(e => e.includes('startable'))).toBe(true);
+    });
+
+    it('uses the first custom active-role column', async () => {
+      mockGetTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'queued', project_id: 'proj-1' });
+      mockGetColumns.mockResolvedValue([
+        { id: 'queued', label: 'Queued', role: 'ready', order: 0 },
+        { id: 'review', label: 'Review', role: 'active', order: 1 },
+        { id: 'shipped', label: 'Shipped', role: 'done', order: 2 },
+      ]);
+      mockUpdateTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'review' });
+
+      await taskCommand('start', ['task-1'], {}, false);
+
+      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { status: 'review' });
     });
 
     it('exits with error when task not found', async () => {

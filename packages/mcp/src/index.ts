@@ -23,6 +23,7 @@ import {
   updateProject,
   deleteProject,
   getProjectStats,
+  getColumns,
   getEpics,
   getEpic,
   createEpic,
@@ -50,7 +51,7 @@ import {
   deleteBlobClient,
   type WebhookEventType,
 } from '@flux/shared/client';
-import { setStorageAdapter, initStore, STATUSES, WEBHOOK_EVENT_TYPES, type Guardrail } from '@flux/shared';
+import { setStorageAdapter, initStore, WEBHOOK_EVENT_TYPES, type Column, type Guardrail } from '@flux/shared';
 import { findFluxDir, loadEnvLocal, readConfig, resolveDataPath } from '@flux/shared/config';
 import { createAdapter } from '@flux/shared/adapters';
 import { createFilesystemBlobStorage, setBlobStorage } from '@flux/shared/blob-storage';
@@ -97,6 +98,14 @@ const server = new Server(
     },
   }
 );
+
+function getStatusValidationError(projectId: string, status: unknown, columns: Column[]): string | null {
+  if (typeof status === 'string' && columns.some(column => column.id === status)) {
+    return null;
+  }
+  const valid = columns.map(column => `${column.id} (${column.label})`).join(', ');
+  return `Unknown status ${JSON.stringify(status)} for project ${projectId}. Valid columns: ${valid}.`;
+}
 
 // ============ Resources ============
 
@@ -266,6 +275,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['project_id'],
         },
       },
+      {
+        name: 'list_columns',
+        description: 'List a project\'s board columns and their behavioural roles. Use this before passing a status on a board you have not seen.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            project_id: { type: 'string', description: 'Project ID' },
+          },
+          required: ['project_id'],
+        },
+      },
 
       // Epic tools
       {
@@ -304,8 +324,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             notes: { type: 'string', description: 'New epic notes' },
             status: {
               type: 'string',
-              enum: STATUSES,
-              description: 'New epic status (todo, in_progress, done)',
+              description: 'New epic column id. Use list_columns to discover valid ids for the epic\'s project.',
             },
             depends_on: {
               type: 'array',
@@ -343,8 +362,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             epic_id: { type: 'string', description: 'Optional: filter by epic ID' },
             status: {
               type: 'string',
-              enum: STATUSES,
-              description: 'Optional: filter by status',
+              description: 'Optional column id to filter by. Use list_columns to discover valid ids for this project.',
             },
           },
           required: ['project_id'],
@@ -352,7 +370,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'list_ready_tasks',
-        description: 'List tasks that are ready to work on (not done, not blocked, sorted by priority). Use this to find actionable work.',
+        description: 'List tasks that are ready to work on (not in a finished-role column, not blocked, sorted by priority). Use this to find actionable work.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -392,7 +410,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'update_task',
-        description: 'Update an existing task (change status, title, epic, or dependencies). Use add_task_comment for notes. Tasks must be moved to "todo" before they can be started (moved to "in_progress").',
+        description: 'Update an existing task (change column, title, epic, or dependencies). Use add_task_comment for notes. A task in a not-started column must move to a startable column before it can enter a being-worked-on column. Use list_columns to discover this project\'s columns and roles.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -400,8 +418,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             title: { type: 'string', description: 'New task title' },
             status: {
               type: 'string',
-              enum: STATUSES,
-              description: 'New task status (planning, todo, in_progress, done). Tasks in "planning" cannot be moved directly to "in_progress".',
+              description: 'New column id. A task in a backlog-role column cannot move directly to an active-role column; use a ready-role column first.',
             },
             epic_id: { type: 'string', description: 'Assign to epic (or empty to unassign)' },
             depends_on: {
@@ -448,15 +465,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'move_task_status',
-        description: 'Quickly move a task to a new status. Note: tasks must be in "todo" before they can be started (moved to "in_progress").',
+        description: 'Quickly move a task to another column. A task in a not-started column must move to a startable column before it can enter a being-worked-on column. Use list_columns to discover ids and roles.',
         inputSchema: {
           type: 'object',
           properties: {
             task_id: { type: 'string', description: 'Task ID' },
             status: {
               type: 'string',
-              enum: STATUSES,
-              description: 'New status (planning, todo, in_progress, done). Tasks in "planning" cannot be moved directly to "in_progress".',
+              description: 'Destination column id. Backlog-role columns cannot move directly to active-role columns; use a ready-role column first.',
             },
             agent_name: { type: 'string', description: 'Name of the agent/teammate performing this update (for agent team tracking on the Kanban board)' },
           },
@@ -664,6 +680,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
+    case 'list_columns': {
+      const projectId = args?.project_id as string;
+      const project = await getProject(projectId);
+      if (!project) {
+        return { content: [{ type: 'text', text: 'Project not found' }], isError: true };
+      }
+      const columns = await getColumns(projectId);
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify(columns.map(({ id, label, role, order }) => ({ id, label, role, order })), null, 2),
+        }],
+      };
+    }
+
     // Epic operations
     case 'list_epics': {
       const epics = await getEpics(args?.project_id as string);
@@ -685,6 +716,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     case 'update_epic': {
+      const currentEpic = await getEpic(args?.epic_id as string);
+      if (!currentEpic) {
+        return { content: [{ type: 'text', text: 'Epic not found' }], isError: true };
+      }
+      if (args?.status !== undefined) {
+        const columns = await getColumns(currentEpic.project_id);
+        const error = getStatusValidationError(currentEpic.project_id, args.status, columns);
+        if (error) return { content: [{ type: 'text', text: error }], isError: true };
+      }
       const updates: Record<string, unknown> = {};
       if (args?.title) updates.title = args.title;
       if (args?.notes !== undefined) updates.notes = args.notes;
@@ -712,7 +752,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     // Task operations
     case 'list_tasks': {
-      const taskList = await getTasks(args?.project_id as string);
+      const projectId = args?.project_id as string;
+      if (args?.status !== undefined) {
+        const columns = await getColumns(projectId);
+        const error = getStatusValidationError(projectId, args.status, columns);
+        if (error) return { content: [{ type: 'text', text: error }], isError: true };
+      }
+      const taskList = await getTasks(projectId);
       let tasks = await Promise.all(
         taskList.map(async t => ({
           ...t,
@@ -756,12 +802,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     case 'update_task': {
-      // Validate workflow: tasks in 'planning' cannot go directly to 'in_progress'
-      if (args?.status === 'in_progress') {
-        const currentTask = await getTask(args?.task_id as string);
-        if (currentTask?.status === 'planning') {
+      const currentTask = await getTask(args?.task_id as string);
+      if (!currentTask) {
+        return { content: [{ type: 'text', text: 'Task not found' }], isError: true };
+      }
+      let targetColumn: Column | undefined;
+      if (args?.status !== undefined) {
+        const columns = await getColumns(currentTask.project_id);
+        const error = getStatusValidationError(currentTask.project_id, args.status, columns);
+        if (error) return { content: [{ type: 'text', text: error }], isError: true };
+        targetColumn = columns.find(column => column.id === args.status);
+        const currentColumn = columns.find(column => column.id === currentTask.status);
+        if (targetColumn?.role === 'active' && currentColumn?.role === 'backlog') {
+          const readyColumns = columns
+            .filter(column => column.role === 'ready')
+            .map(column => `${column.id} (${column.label})`)
+            .join(', ');
           return {
-            content: [{ type: 'text', text: 'Cannot start a task that is still in planning. Move the task to "todo" first.' }],
+            content: [{ type: 'text', text: `Cannot start a task from a not-started column. Move it to a startable column first: ${readyColumns}.` }],
             isError: true,
           };
         }
@@ -778,13 +836,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (args?.guardrails !== undefined) updates.guardrails = args.guardrails;
       // Agent team worker tracking
       const agentName = args?.agent_name as string | undefined;
-      if (args?.status === 'in_progress' && agentName) {
-        const currentTask = await getTask(args?.task_id as string);
+      if (targetColumn?.role === 'active' && agentName) {
         const currentWorkers = currentTask?.workers || [];
         if (!currentWorkers.includes(agentName)) {
           updates.workers = [...currentWorkers, agentName];
         }
-      } else if (args?.status === 'done') {
+      } else if (targetColumn && targetColumn.role !== 'active') {
         updates.workers = [];
       }
       const task = await updateTask(args?.task_id as string, updates);
@@ -812,26 +869,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     case 'move_task_status': {
-      // Validate workflow: tasks in 'planning' cannot go directly to 'in_progress'
-      if (args?.status === 'in_progress') {
-        const currentTask = await getTask(args?.task_id as string);
-        if (currentTask?.status === 'planning') {
+      const currentTask = await getTask(args?.task_id as string);
+      if (!currentTask) {
+        return { content: [{ type: 'text', text: 'Task not found' }], isError: true };
+      }
+      const columns = await getColumns(currentTask.project_id);
+      const error = getStatusValidationError(currentTask.project_id, args?.status, columns);
+      if (error) return { content: [{ type: 'text', text: error }], isError: true };
+      const targetColumn = columns.find(column => column.id === args?.status);
+      const currentColumn = columns.find(column => column.id === currentTask.status);
+      if (targetColumn?.role === 'active' && currentColumn?.role === 'backlog') {
+        const readyColumns = columns
+          .filter(column => column.role === 'ready')
+          .map(column => `${column.id} (${column.label})`)
+          .join(', ');
           return {
-            content: [{ type: 'text', text: 'Cannot start a task that is still in planning. Move the task to "todo" first.' }],
+            content: [{ type: 'text', text: `Cannot start a task from a not-started column. Move it to a startable column first: ${readyColumns}.` }],
             isError: true,
           };
-        }
       }
       const statusUpdates: Record<string, unknown> = { status: args?.status as string };
       // Agent team worker tracking
       const agentName = args?.agent_name as string | undefined;
-      if (args?.status === 'in_progress' && agentName) {
-        const currentTask = await getTask(args?.task_id as string);
+      if (targetColumn?.role === 'active' && agentName) {
         const currentWorkers = currentTask?.workers || [];
         if (!currentWorkers.includes(agentName)) {
           statusUpdates.workers = [...currentWorkers, agentName];
         }
-      } else if (args?.status === 'done') {
+      } else if (targetColumn && targetColumn.role !== 'active') {
         statusUpdates.workers = [];
       }
       const task = await updateTask(args?.task_id as string, statusUpdates);

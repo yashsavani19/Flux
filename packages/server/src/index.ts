@@ -15,6 +15,11 @@ import {
   updateProject,
   deleteProject,
   getProjectStats,
+  getColumns,
+  getColumn,
+  setColumns,
+  deleteColumn,
+  isActiveColumn,
   getEpics,
   getEpic,
   createEpic,
@@ -60,6 +65,7 @@ import { createFilesystemBlobStorage, setBlobStorage, getBlobStorage } from '@fl
 import { handleWebhookEvent, testWebhookDelivery } from './webhook-service.js';
 import { authMiddleware, filterProjects, canReadProject, canWriteProject, requireServerAccess, type AuthContext } from './middleware/auth.js';
 import { rateLimit } from './middleware/rate-limit.js';
+import { getStatusValidationError } from './column-validation.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -266,6 +272,49 @@ app.patch('/api/projects/:id', requireServerAccess, async (c) => {
   return c.json(project);
 });
 
+app.get('/api/projects/:projectId/columns', (c) => {
+  const auth = c.get('auth');
+  const projectId = c.req.param('projectId');
+  if (!getProject(projectId) || !canReadProject(auth, projectId)) {
+    return c.json({ error: 'Project not found' }, 404);
+  }
+  return c.json(getColumns(projectId));
+});
+
+app.put('/api/projects/:projectId/columns', requireServerAccess, async (c) => {
+  const projectId = c.req.param('projectId');
+  if (!getProject(projectId)) {
+    return c.json({ error: 'Project not found' }, 404);
+  }
+  const body = await c.req.json();
+  const columns = Array.isArray(body) ? body : body?.columns;
+  try {
+    return c.json(setColumns(projectId, columns));
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Invalid columns' }, 400);
+  }
+});
+
+app.delete('/api/projects/:projectId/columns/:columnId', requireServerAccess, async (c) => {
+  const projectId = c.req.param('projectId');
+  const columnId = c.req.param('columnId');
+  if (!getProject(projectId)) {
+    return c.json({ error: 'Project not found' }, 404);
+  }
+  if (!getColumn(projectId, columnId)) {
+    return c.json({ error: 'Column not found' }, 404);
+  }
+  const body = await c.req.json();
+  if (!getColumn(projectId, body?.moveTasksTo)) {
+    return c.json({ error: 'Column not found' }, 404);
+  }
+  try {
+    return c.json(deleteColumn(projectId, columnId, body?.moveTasksTo));
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'Invalid column deletion' }, 400);
+  }
+});
+
 app.delete('/api/projects/:id', requireServerAccess, (c) => {
   const project = getProject(c.req.param('id'));
   deleteProject(c.req.param('id'));
@@ -302,7 +351,14 @@ app.post('/api/projects/:projectId/epics', async (c) => {
     return c.json({ error: 'Project not found' }, 404);
   }
   const body = await c.req.json();
-  const epic = createEpic(projectId, body.title, body.notes, body.auto);
+  if (body.status !== undefined) {
+    const error = getStatusValidationError(projectId, body.status);
+    if (error) return c.json({ error }, 400);
+  }
+  let epic = createEpic(projectId, body.title, body.notes, body.auto);
+  if (body.status !== undefined) {
+    epic = updateEpic(epic.id, { status: body.status })!;
+  }
   // Trigger webhook
   triggerWebhooks('epic.created', { epic }, projectId);
   return c.json(epic, 201);
@@ -317,6 +373,10 @@ app.patch('/api/epics/:id', async (c) => {
     return c.json({ error: 'Epic not found' }, 404); // Hide existence
   }
   const body = await c.req.json();
+  if (body.status !== undefined) {
+    const error = getStatusValidationError(previous.project_id, body.status);
+    if (error) return c.json({ error }, 400);
+  }
   const epic = updateEpic(epicId, body);
   if (!epic) return c.json({ error: 'Epic not found' }, 404);
   triggerWebhooks('epic.updated', { epic, previous }, epic.project_id);
@@ -410,12 +470,19 @@ app.post('/api/projects/:projectId/tasks', async (c) => {
   const body = await c.req.json();
   const validation = validateTaskFields(body);
   if (validation.error) return c.json({ error: validation.error }, 400);
-  const task = createTask(projectId, body.title, body.epic_id, {
+  if (body.status !== undefined) {
+    const error = getStatusValidationError(projectId, body.status);
+    if (error) return c.json({ error }, 400);
+  }
+  let task = createTask(projectId, body.title, body.epic_id, {
     priority: body.priority,
     depends_on: body.depends_on,
     acceptance_criteria: body.acceptance_criteria,
     guardrails: body.guardrails,
   });
+  if (body.status !== undefined) {
+    task = updateTask(task.id, { status: body.status })!;
+  }
   // Trigger webhook
   triggerWebhooks('task.created', { task }, projectId);
   return c.json(task, 201);
@@ -432,14 +499,18 @@ app.patch('/api/tasks/:id', async (c) => {
   const body = await c.req.json();
   const validation = validateTaskFields(body);
   if (validation.error) return c.json({ error: validation.error }, 400);
+  if (body.status !== undefined) {
+    const error = getStatusValidationError(previous.project_id, body.status);
+    if (error) return c.json({ error }, 400);
+  }
   // Agent team worker tracking
   const agentName = typeof body.agent_name === 'string' ? body.agent_name : undefined;
-  if (body.status === 'in_progress' && agentName) {
+  if (isActiveColumn(previous.project_id, body.status) && agentName) {
     const currentWorkers = previous.workers || [];
     if (!currentWorkers.includes(agentName)) {
       body.workers = [...currentWorkers, agentName];
     }
-  } else if (body.status === 'done') {
+  } else if (body.status !== undefined && !isActiveColumn(previous.project_id, body.status)) {
     body.workers = [];
   }
   delete body.agent_name; // Don't persist agent_name on the task itself
