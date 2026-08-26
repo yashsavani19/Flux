@@ -250,6 +250,38 @@ export function sortColumns(columns: Column[]): Column[] {
   return [...columns].sort((a, b) => a.order - b.order);
 }
 
+// Compare two server snapshots independent of harmless order gaps. This is used
+// by conditional column writes so a stale editor cannot overwrite a newer one.
+export function columnsEqual(a: Column[], b: Column[]): boolean {
+  const normalise = (columns: Column[]) =>
+    sortColumns(columns).map((column, order) => ({
+      id: column.id,
+      label: column.label,
+      color: column.color,
+      role: column.role,
+      order,
+    }));
+  return JSON.stringify(normalise(a)) === JSON.stringify(normalise(b));
+}
+
+// The one guarded task transition. Keeping this role-based and shared prevents
+// REST, MCP, CLI and direct-store callers from drifting apart.
+export function getTaskColumnTransitionError(
+  columns: Column[],
+  currentColumnId: string,
+  targetColumnId: string
+): string | null {
+  const current = columns.find(column => column.id === currentColumnId);
+  const target = columns.find(column => column.id === targetColumnId);
+  if (current?.role !== 'backlog' || target?.role !== 'active') return null;
+
+  const readyColumns = columns
+    .filter(column => column.role === 'ready')
+    .map(column => `${column.id} (${column.label})`)
+    .join(', ');
+  return `Cannot start a task from a not-started column. Move it to a startable column first: ${readyColumns}.`;
+}
+
 // ---- Legacy status constants ----
 // Retained so nothing breaks while callers migrate to project columns. Prefer
 // getColumns(projectId) from the store: these describe the DEFAULTS only and are

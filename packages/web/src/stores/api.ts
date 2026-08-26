@@ -89,11 +89,15 @@ export async function getColumns(projectId: string): Promise<Column[]> {
 
 // Whole-list replace. Add, rename, recolour and reorder all save through here,
 // so ordering can never race against another writer.
-export async function saveColumns(projectId: string, columns: Column[]): Promise<Column[]> {
+export async function saveColumns(
+  projectId: string,
+  columns: Column[],
+  expectedColumns?: Column[]
+): Promise<Column[]> {
   const res = await authFetch(`${API_BASE}/projects/${projectId}/columns`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(columns),
+    body: JSON.stringify(expectedColumns ? { columns, expectedColumns } : columns),
   });
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
@@ -104,12 +108,13 @@ export async function saveColumns(projectId: string, columns: Column[]): Promise
 export async function deleteColumn(
   projectId: string,
   columnId: string,
-  moveTasksTo: string
+  moveTasksTo: string,
+  expectedColumns?: Column[]
 ): Promise<Column[]> {
   const res = await authFetch(`${API_BASE}/projects/${projectId}/columns/${columnId}`, {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ moveTasksTo }),
+    body: JSON.stringify({ moveTasksTo, expectedColumns }),
   });
   if (!res.ok) throw new Error(await readError(res));
   return res.json();
@@ -128,12 +133,18 @@ export async function getEpic(id: string): Promise<Epic | null> {
   return res.json();
 }
 
-export async function createEpic(projectId: string, title: string, notes?: string): Promise<Epic> {
+export async function createEpic(
+  projectId: string,
+  title: string,
+  notes?: string,
+  status?: string
+): Promise<Epic> {
   const res = await authFetch(`${API_BASE}/projects/${projectId}/epics`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, notes }),
+    body: JSON.stringify({ title, notes, status }),
   });
+  if (!res.ok) throw new Error(await readError(res));
   return res.json();
 }
 
@@ -159,6 +170,14 @@ export async function getTasks(projectId: string): Promise<TaskWithBlocked[]> {
   return res.json();
 }
 
+// Includes archived tasks because column deletion moves them even though the
+// board does not render them.
+export async function getColumnTaskCounts(projectId: string): Promise<Record<string, number>> {
+  const res = await authFetch(`${API_BASE}/projects/${projectId}/column-task-counts`);
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
 export async function getTask(id: string): Promise<TaskWithBlocked | null> {
   const res = await authFetch(`${API_BASE}/tasks/${id}`);
   if (!res.ok) return null;
@@ -168,13 +187,15 @@ export async function getTask(id: string): Promise<TaskWithBlocked | null> {
 export async function createTask(
   projectId: string,
   title: string,
-  epicId?: string
+  epicId?: string,
+  status?: string
 ): Promise<Task> {
   const res = await authFetch(`${API_BASE}/projects/${projectId}/tasks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, epic_id: epicId }),
+    body: JSON.stringify({ title, epic_id: epicId, status }),
   });
+  if (!res.ok) throw new Error(await readError(res));
   return res.json();
 }
 

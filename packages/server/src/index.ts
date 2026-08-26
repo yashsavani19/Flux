@@ -19,6 +19,8 @@ import {
   getColumn,
   setColumns,
   deleteColumn,
+  columnsEqual,
+  getTaskColumnTransitionError,
   isActiveColumn,
   getEpics,
   getEpic,
@@ -26,6 +28,7 @@ import {
   updateEpic,
   deleteEpic,
   getTasks,
+  getAllTasks,
   getTask,
   createTask,
   updateTask,
@@ -265,6 +268,9 @@ app.post('/api/projects', requireServerAccess, async (c) => {
 
 app.patch('/api/projects/:id', requireServerAccess, async (c) => {
   const body = await c.req.json();
+  if (body.columns !== undefined) {
+    return c.json({ error: 'Use the project columns endpoint to change columns.' }, 400);
+  }
   const previous = getProject(c.req.param('id'));
   const project = updateProject(c.req.param('id'), body);
   if (!project) return c.json({ error: 'Project not found' }, 404);
@@ -288,6 +294,15 @@ app.put('/api/projects/:projectId/columns', requireServerAccess, async (c) => {
   }
   const body = await c.req.json();
   const columns = Array.isArray(body) ? body : body?.columns;
+  const expectedColumns = Array.isArray(body) ? undefined : body?.expectedColumns;
+  if (expectedColumns !== undefined) {
+    if (!Array.isArray(expectedColumns)) {
+      return c.json({ error: 'expectedColumns must be an array' }, 400);
+    }
+    if (!columnsEqual(getColumns(projectId), expectedColumns)) {
+      return c.json({ error: 'Columns changed since this editor was opened. Reload the latest columns and try again.' }, 409);
+    }
+  }
   try {
     return c.json(setColumns(projectId, columns));
   } catch (error) {
@@ -305,6 +320,14 @@ app.delete('/api/projects/:projectId/columns/:columnId', requireServerAccess, as
     return c.json({ error: 'Column not found' }, 404);
   }
   const body = await c.req.json();
+  if (body?.expectedColumns !== undefined) {
+    if (!Array.isArray(body.expectedColumns)) {
+      return c.json({ error: 'expectedColumns must be an array' }, 400);
+    }
+    if (!columnsEqual(getColumns(projectId), body.expectedColumns)) {
+      return c.json({ error: 'Columns changed since this editor was opened. Reload the latest columns and try again.' }, 409);
+    }
+  }
   if (!getColumn(projectId, body?.moveTasksTo)) {
     return c.json({ error: 'Column not found' }, 404);
   }
@@ -411,6 +434,22 @@ app.get('/api/projects/:projectId/tasks', (c) => {
   return c.json(tasks);
 });
 
+// Counts include archived tasks because deleting a column moves those too. The
+// board itself continues to request only visible tasks from the route above.
+app.get('/api/projects/:projectId/column-task-counts', (c) => {
+  const auth = c.get('auth');
+  const projectId = c.req.param('projectId');
+  if (!canReadProject(auth, projectId)) {
+    return c.json({ error: 'Project not found' }, 404);
+  }
+  const counts: Record<string, number> = {};
+  for (const task of getAllTasks()) {
+    if (task.project_id !== projectId) continue;
+    counts[task.status] = (counts[task.status] ?? 0) + 1;
+  }
+  return c.json(counts);
+});
+
 // Ready tasks (unblocked, not done, sorted by priority)
 // IMPORTANT: Must be before /api/tasks/:id to avoid :id catching "ready" as a task ID
 app.get('/api/tasks/ready', (c) => {
@@ -470,9 +509,19 @@ app.post('/api/projects/:projectId/tasks', async (c) => {
   const body = await c.req.json();
   const validation = validateTaskFields(body);
   if (validation.error) return c.json({ error: validation.error }, 400);
+  if (body.project_id !== undefined && body.project_id !== projectId) {
+    return c.json({ error: 'A task cannot be moved to a different project.' }, 400);
+  }
   if (body.status !== undefined) {
     const error = getStatusValidationError(projectId, body.status);
     if (error) return c.json({ error }, 400);
+    const columns = getColumns(projectId);
+    const transitionError = getTaskColumnTransitionError(
+      columns,
+      columns[0]!.id,
+      body.status
+    );
+    if (transitionError) return c.json({ error: transitionError }, 400);
   }
   let task = createTask(projectId, body.title, body.epic_id, {
     priority: body.priority,
@@ -499,9 +548,18 @@ app.patch('/api/tasks/:id', async (c) => {
   const body = await c.req.json();
   const validation = validateTaskFields(body);
   if (validation.error) return c.json({ error: validation.error }, 400);
+  if (body.project_id !== undefined && body.project_id !== previous.project_id) {
+    return c.json({ error: 'A task cannot be moved to a different project.' }, 400);
+  }
   if (body.status !== undefined) {
     const error = getStatusValidationError(previous.project_id, body.status);
     if (error) return c.json({ error }, 400);
+    const transitionError = getTaskColumnTransitionError(
+      getColumns(previous.project_id),
+      previous.status,
+      body.status
+    );
+    if (transitionError) return c.json({ error: transitionError }, 400);
   }
   // Agent team worker tracking
   const agentName = typeof body.agent_name === 'string' ? body.agent_name : undefined;

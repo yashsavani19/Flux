@@ -20,10 +20,10 @@ import {
 import type { Task, Epic, Column, TaskComment, Guardrail, Blob as FluxBlob } from "@flux/shared";
 import { DEFAULT_COLUMNS } from "@flux/shared";
 
-// Where a brand-new task lands if the form ever needs to name a column itself:
-// the first column that means "ready to start", falling back to the leftmost.
+// Preserve the original creation default: brand-new work starts in the
+// leftmost column unless the user explicitly chooses another one.
 function defaultColumnId(columns: Column[]): string {
-  return (columns.find((c) => c.role === "ready") ?? columns[0])?.id ?? "todo";
+  return columns[0]?.id ?? "planning";
 }
 
 function formatFileSize(bytes: number): string {
@@ -50,7 +50,7 @@ export function TaskForm({
   defaultEpicId,
 }: TaskFormProps) {
   const [title, setTitle] = useState("");
-  const [status, setStatus] = useState<string>("todo");
+  const [status, setStatus] = useState<string>(DEFAULT_COLUMNS[0].id);
   const [epicId, setEpicId] = useState<string>("");
   const [epics, setEpics] = useState<Epic[]>([]);
   const [columns, setColumns] = useState<Column[]>(DEFAULT_COLUMNS);
@@ -150,7 +150,8 @@ export function TaskForm({
         const newTask = await createTask(
           projectId,
           title.trim(),
-          epicId || undefined
+          epicId || undefined,
+          status
         );
         const updates: Partial<Task> = {};
         if (dependsOn.length > 0) updates.depends_on = dependsOn;

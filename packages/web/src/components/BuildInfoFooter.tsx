@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'preact/hooks'
+import { API_ORIGIN } from '../stores'
 
 type VersionInfo = {
   sha: string
@@ -26,8 +27,7 @@ export function BuildInfoFooter() {
   const [apiInfo, setApiInfo] = useState<VersionInfo | null>(null)
 
   useEffect(() => {
-    const apiBase = import.meta.env.DEV ? 'http://localhost:3000' : ''
-    fetch(`${apiBase}/version`)
+    fetch(`${API_ORIGIN}/version`)
       .then(response => (response.ok ? response.json() : null))
       .then(data => {
         if (data?.sha) {

@@ -155,6 +155,143 @@ describe('column REST API', () => {
       body: JSON.stringify({ status: 'queued' }),
     });
     expect((await queuedResponse.json()).workers).toEqual([]);
+
+    const injectedResponse = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workers: ['phantom'] }),
+    });
+    expect((await injectedResponse.json()).workers).toEqual([]);
+  });
+
+  it('rejects stale column snapshots instead of overwriting a newer editor', async () => {
+    const created = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Column concurrency' }),
+    });
+    const project = await created.json();
+    const defaults = await fetch(`${baseUrl}/api/projects/${project.id}/columns`).then(response => response.json());
+    const renamed = defaults.map((column: { id: string }) =>
+      column.id === 'planning' ? { ...column, label: 'Ideas' } : column
+    );
+
+    const first = await fetch(`${baseUrl}/api/projects/${project.id}/columns`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ columns: renamed, expectedColumns: defaults }),
+    });
+    expect(first.status).toBe(200);
+
+    const stale = await fetch(`${baseUrl}/api/projects/${project.id}/columns`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ columns: defaults, expectedColumns: defaults }),
+    });
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error).toContain('changed since this editor was opened');
+    const current = await fetch(`${baseUrl}/api/projects/${project.id}/columns`).then(response => response.json());
+    expect(current.find((column: { id: string }) => column.id === 'planning').label).toBe('Ideas');
+  });
+
+  it('counts and moves archived tasks through a rename-plus-add delete save', async () => {
+    const created = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Archived column moves' }),
+    });
+    const project = await created.json();
+    const defaults = await fetch(`${baseUrl}/api/projects/${project.id}/columns`).then(response => response.json());
+    const visible = await fetch(`${baseUrl}/api/projects/${project.id}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Visible' }),
+    }).then(response => response.json());
+    const archived = await fetch(`${baseUrl}/api/projects/${project.id}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Archived' }),
+    }).then(response => response.json());
+    await fetch(`${baseUrl}/api/tasks/${archived.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archived: true }),
+    });
+
+    const counts = await fetch(`${baseUrl}/api/projects/${project.id}/column-task-counts`).then(response => response.json());
+    expect(counts.planning).toBe(2);
+
+    const stranded = await fetch(`${baseUrl}/api/projects/${project.id}/columns`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(defaults.filter((column: { id: string }) => column.id !== 'planning')),
+    });
+    expect(stranded.status).toBe(400);
+
+    const staged = [
+      ...defaults.map((column: { id: string }) =>
+        column.id === 'planning' ? { ...column, label: 'Ideas' } : column
+      ),
+      { id: 'triage', label: 'Triage', color: '#f59e0b', role: 'ready', order: defaults.length },
+    ];
+    const saved = await fetch(`${baseUrl}/api/projects/${project.id}/columns`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ columns: staged, expectedColumns: defaults }),
+    });
+    expect(saved.status).toBe(200);
+    const savedColumns = await saved.json();
+    expect(savedColumns.find((column: { id: string }) => column.id === 'planning').label).toBe('Ideas');
+
+    const removed = await fetch(`${baseUrl}/api/projects/${project.id}/columns/planning`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ moveTasksTo: 'triage', expectedColumns: savedColumns }),
+    });
+    expect(removed.status).toBe(200);
+    expect((await removed.json()).some((column: { id: string }) => column.id === 'planning')).toBe(false);
+    expect(await fetch(`${baseUrl}/api/tasks/${visible.id}`).then(response => response.json())).toMatchObject({ status: 'triage' });
+    expect(await fetch(`${baseUrl}/api/tasks/${archived.id}`).then(response => response.json())).toMatchObject({ status: 'triage', archived: true });
+  });
+
+  it('enforces backlog-to-active transitions over REST without partial creates', async () => {
+    const created = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'REST transition gate' }),
+    });
+    const project = await created.json();
+
+    const directCreate = await fetch(`${baseUrl}/api/projects/${project.id}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Direct active', status: 'in_progress' }),
+    });
+    expect(directCreate.status).toBe(400);
+    expect(await fetch(`${baseUrl}/api/projects/${project.id}/tasks`).then(response => response.json())).toEqual([]);
+
+    const task = await fetch(`${baseUrl}/api/projects/${project.id}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Gated task' }),
+    }).then(response => response.json());
+    const rejected = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'in_progress' }),
+    });
+    expect(rejected.status).toBe(400);
+    expect(await fetch(`${baseUrl}/api/tasks/${task.id}`).then(response => response.json())).toMatchObject({ status: 'planning' });
+  });
+
+  it('rejects column changes through the general project patch route', async () => {
+    const response = await fetch(`${baseUrl}/api/projects/${projectId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ columns: [] }),
+    });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toContain('columns endpoint');
   });
 
   it('allows project-scoped keys to read columns but keeps configuration writes server-only', async () => {

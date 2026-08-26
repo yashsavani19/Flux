@@ -17,6 +17,7 @@ import {
   getProject,
   getProjectStats,
   getReadyTasks,
+  getTask,
   getTasks,
   initStore,
   isTaskBlocked,
@@ -25,7 +26,7 @@ import {
   setStorageAdapter,
   updateTask,
 } from '../src/store.js';
-import { DEFAULT_COLUMNS, type Column } from '../src/types.js';
+import { columnsEqual, DEFAULT_COLUMNS, type Column } from '../src/types.js';
 
 type AdapterData = Store & { project?: Store['projects'][number] };
 
@@ -138,6 +139,18 @@ describe('store', () => {
     expect(getEpic(epic.id)?.status).toBe('todo');
   });
 
+  it('never strands archived tasks when columns are replaced or deleted', () => {
+    const project = createProject('Archived deletion');
+    const task = createTask(project.id, 'Archived task');
+    updateTask(task.id, { archived: true });
+    const withoutPlanning = getColumns(project.id).filter(column => column.id !== 'planning');
+
+    expect(() => setColumns(project.id, withoutPlanning)).toThrow('still sit in removed column');
+
+    deleteColumn(project.id, 'planning', 'todo');
+    expect(getTask(task.id)).toMatchObject({ status: 'todo', archived: true });
+  });
+
   it('clears workers when deleting a column into a non-active column', () => {
     const project = createProject('Worker cleanup');
     const columns: Column[] = [
@@ -169,6 +182,32 @@ describe('store', () => {
 
     expect(updateTask(task.id, { status: 'review' })?.workers).toEqual(['agent-1']);
     expect(updateTask(task.id, { status: 'queued' })?.workers).toEqual([]);
+    expect(updateTask(task.id, { workers: ['phantom'] })?.workers).toEqual([]);
+    expect(() => updateTask(task.id, { project_id: 'somewhere-else' })).toThrow(
+      'cannot be moved to a different project'
+    );
+  });
+
+  it('enforces the backlog-to-active gate for direct store callers', () => {
+    const project = createProject('Transition gate');
+    const task = createTask(project.id, 'Task');
+
+    expect(() => updateTask(task.id, { status: 'in_progress' })).toThrow(
+      'Move it to a startable column first'
+    );
+    expect(getTask(task.id)?.status).toBe('planning');
+    updateTask(task.id, { status: 'todo' });
+    expect(updateTask(task.id, { status: 'in_progress' })?.status).toBe('in_progress');
+  });
+
+  it('compares normalised column snapshots for conditional writes', () => {
+    const sparse = DEFAULT_COLUMNS.map((column, index) => ({ ...column, order: index * 10 }));
+    const renamed = sparse.map(column =>
+      column.id === 'planning' ? { ...column, label: 'Ideas' } : column
+    );
+
+    expect(columnsEqual(DEFAULT_COLUMNS, sparse)).toBe(true);
+    expect(columnsEqual(DEFAULT_COLUMNS, renamed)).toBe(false);
   });
 
   it('refuses to remove the last ready-role or done-role column', () => {

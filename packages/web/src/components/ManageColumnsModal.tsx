@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'preact/hooks'
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -11,6 +11,7 @@ import {
   COLUMN_COLORS,
   COLUMN_ROLES,
   COLUMN_ROLE_CONFIG,
+  columnsEqual,
   slugifyColumnId,
   validateColumns,
 } from '@flux/shared'
@@ -54,10 +55,6 @@ function toColumns(draft: DraftColumn[]): Column[] {
   return draft.map(({ uid: _uid, ...column }, index) => ({ ...column, order: index }))
 }
 
-function sameList(a: DraftColumn[], b: Column[]): boolean {
-  return JSON.stringify(toColumns(a)) === JSON.stringify(b.map((c, i) => ({ ...c, order: i })))
-}
-
 export function ManageColumnsModal({
   isOpen,
   onClose,
@@ -68,30 +65,49 @@ export function ManageColumnsModal({
   onSaved,
 }: ManageColumnsModalProps) {
   const [draft, setDraft] = useState<DraftColumn[]>(() => toDraft(columns))
-  const [savedIds, setSavedIds] = useState<string[]>(() => columns.map(c => c.id))
+  const [baseline, setBaseline] = useState<Column[]>(() =>
+    columns.map((column, order) => ({ ...column, order }))
+  )
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const [moveTasksTo, setMoveTasksTo] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const activeSession = useRef<string | null>(null)
 
-  // Start from whatever is currently on the board every time the modal opens.
-  useEffect(() => {
-    if (!isOpen) return
-    setDraft(toDraft(columns))
-    setSavedIds(columns.map(c => c.id))
+  const adoptColumns = (nextColumns: Column[]) => {
+    const normalised = nextColumns.map((column, order) => ({ ...column, order }))
+    setDraft(toDraft(normalised))
+    setBaseline(normalised)
     setSaveError(null)
-    setDeleteTargetId(null)
-    setDeleteError(null)
-  }, [isOpen, columns])
+  }
+
+  // Start from the latest board snapshot on open. While the editor is open,
+  // harmless SSE reloads do not reset the draft; a genuine remote change is
+  // adopted only while the local draft is still clean.
+  useEffect(() => {
+    if (!isOpen) {
+      activeSession.current = null
+      return
+    }
+    const opening = activeSession.current !== projectId
+    const localDirty = !columnsEqual(toColumns(draft), baseline)
+    if (opening || (!localDirty && !columnsEqual(columns, baseline))) {
+      activeSession.current = projectId
+      adoptColumns(columns)
+      setDeleteTargetId(null)
+      setDeleteError(null)
+    }
+  }, [isOpen, projectId, columns, draft, baseline])
 
   const validationError = useMemo(() => validateColumns(toColumns(draft)), [draft])
-  const dirty = !sameList(draft, columns)
+  const dirty = !columnsEqual(toColumns(draft), baseline)
+  const remoteChanged = isOpen && !loadError && !columnsEqual(columns, baseline)
   const deleteTarget = draft.find(c => c.id === deleteTargetId) ?? null
   const moveOptions = draft.filter(c => c.id !== deleteTargetId)
 
-  const isNew = (id: string) => !savedIds.includes(id)
+  const isNew = (id: string) => !baseline.some(column => column.id === id)
 
   const updateColumn = (index: number, patch: Partial<Column>) => {
     setSaveError(null)
@@ -160,18 +176,29 @@ export function ManageColumnsModal({
   }
 
   const handleDeleteConfirmed = async () => {
-    if (!deleteTarget || !moveTasksTo || deleting) return
+    if (!deleteTarget || !moveTasksTo || deleting || remoteChanged) return
     setDeleting(true)
     setDeleteError(null)
     try {
       // Save staged edits first: a rename, or a freshly added destination
       // column, has to exist on the server before the tasks can be moved into it.
+      let savedSnapshot = baseline
       if (dirty) {
-        await saveColumns(projectId, toColumns(draft))
+        savedSnapshot = await saveColumns(
+          projectId,
+          toColumns(draft),
+          loadError ? undefined : baseline
+        )
+        adoptColumns(savedSnapshot)
+        await onSaved(savedSnapshot)
       }
-      const remaining = await deleteColumn(projectId, deleteTarget.id, moveTasksTo)
-      setDraft(toDraft(remaining))
-      setSavedIds(remaining.map(c => c.id))
+      const remaining = await deleteColumn(
+        projectId,
+        deleteTarget.id,
+        moveTasksTo,
+        loadError ? undefined : savedSnapshot
+      )
+      adoptColumns(remaining)
       await onSaved(remaining)
       setDeleteTargetId(null)
     } catch (e) {
@@ -182,7 +209,7 @@ export function ManageColumnsModal({
   }
 
   const handleSave = async () => {
-    if (saving) return
+    if (saving || remoteChanged) return
     const error = validateColumns(toColumns(draft))
     if (error) {
       setSaveError(error)
@@ -191,7 +218,11 @@ export function ManageColumnsModal({
     setSaving(true)
     setSaveError(null)
     try {
-      const saved = await saveColumns(projectId, toColumns(draft))
+      const saved = await saveColumns(
+        projectId,
+        toColumns(draft),
+        loadError ? undefined : baseline
+      )
       await onSaved(saved)
       onClose()
     } catch (e) {
@@ -228,6 +259,26 @@ export function ManageColumnsModal({
           </div>
         )}
 
+        {remoteChanged && (
+          <div class="alert alert-warning mb-4 text-sm">
+            <ExclamationTriangleIcon className="h-5 w-5 flex-shrink-0" />
+            <span>
+              These columns changed elsewhere while you were editing. Reload the latest version before saving.
+            </span>
+            <button
+              type="button"
+              class="btn btn-sm btn-ghost"
+              onClick={() => {
+                adoptColumns(columns)
+                setDeleteTargetId(null)
+                setDeleteError(null)
+              }}
+            >
+              Reload latest
+            </button>
+          </div>
+        )}
+
         <div class="max-h-[55vh] overflow-y-auto pr-1 space-y-3">
           {draft.map((column, index) => {
             const reason = blockedReason(column)
@@ -241,7 +292,7 @@ export function ManageColumnsModal({
                       type="button"
                       class="btn btn-ghost btn-xs join-item px-1"
                       onClick={() => move(index, -1)}
-                      disabled={index === 0}
+                      disabled={index === 0 || remoteChanged}
                       title="Move up"
                       aria-label={`Move ${column.label} up`}
                     >
@@ -251,7 +302,7 @@ export function ManageColumnsModal({
                       type="button"
                       class="btn btn-ghost btn-xs join-item px-1"
                       onClick={() => move(index, 1)}
-                      disabled={index === draft.length - 1}
+                      disabled={index === draft.length - 1 || remoteChanged}
                       title="Move down"
                       aria-label={`Move ${column.label} down`}
                     >
@@ -271,6 +322,7 @@ export function ManageColumnsModal({
                     onInput={(e) =>
                       handleLabelChange(index, (e.target as HTMLInputElement).value)
                     }
+                    disabled={remoteChanged}
                   />
                   <span class="text-xs text-base-content/50 whitespace-nowrap">
                     {count} task{count === 1 ? '' : 's'}
@@ -279,7 +331,7 @@ export function ManageColumnsModal({
                     type="button"
                     class="btn btn-ghost btn-xs text-error disabled:text-base-content/30"
                     onClick={() => handleDeleteClick(column)}
-                    disabled={!!removeBlocked}
+                    disabled={!!removeBlocked || remoteChanged}
                     title={removeBlocked ?? `Remove ${column.label}`}
                     aria-label={`Remove ${column.label}`}
                   >
@@ -298,6 +350,7 @@ export function ManageColumnsModal({
                       }`}
                       style={{ backgroundColor: color }}
                       onClick={() => updateColumn(index, { color })}
+                      disabled={remoteChanged}
                       title={`Use this colour for ${column.label}`}
                       aria-label={`Use colour ${color}`}
                     />
@@ -315,6 +368,7 @@ export function ManageColumnsModal({
                         role: (e.target as HTMLSelectElement).value as ColumnRole,
                       })
                     }
+                    disabled={remoteChanged}
                   >
                     {COLUMN_ROLES.map(role => (
                       <option key={role} value={role}>
@@ -335,7 +389,12 @@ export function ManageColumnsModal({
           })}
         </div>
 
-        <button type="button" class="btn btn-ghost btn-sm mt-3" onClick={handleAdd}>
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm mt-3"
+          onClick={handleAdd}
+          disabled={remoteChanged}
+        >
           <PlusIcon className="h-4 w-4" />
           Add column
         </button>
@@ -355,7 +414,7 @@ export function ManageColumnsModal({
             type="button"
             class="btn btn-primary"
             onClick={handleSave}
-            disabled={saving || deleting || !!validationError || !dirty}
+            disabled={saving || deleting || remoteChanged || !!validationError || !dirty}
           >
             {saving ? <span class="loading loading-spinner loading-sm"></span> : 'Save columns'}
           </button>
@@ -403,7 +462,7 @@ export function ManageColumnsModal({
         }
         confirmLabel="Move tasks and remove"
         confirmClassName="btn-error"
-        confirmDisabled={!moveTasksTo}
+        confirmDisabled={!moveTasksTo || remoteChanged}
         isLoading={deleting}
         onConfirm={handleDeleteConfirmed}
         onClose={() => {

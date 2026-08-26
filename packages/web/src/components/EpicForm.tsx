@@ -16,7 +16,7 @@ interface EpicFormProps {
 export function EpicForm({ isOpen, onClose, onSave, epic, projectId }: EpicFormProps) {
   const [title, setTitle] = useState('')
   const [notes, setNotes] = useState('')
-  const [status, setStatus] = useState<string>('todo')
+  const [status, setStatus] = useState<string>(DEFAULT_COLUMNS[0].id)
   const [dependsOn, setDependsOn] = useState<string[]>([])
   const [availableEpics, setAvailableEpics] = useState<Epic[]>([])
   const [columns, setColumns] = useState<Column[]>(DEFAULT_COLUMNS)
@@ -54,7 +54,7 @@ export function EpicForm({ isOpen, onClose, onSave, epic, projectId }: EpicFormP
       setTitle('')
       setNotes('')
       setDependsOn([])
-      setStatus((columnsData.find(c => c.role === 'ready') ?? columnsData[0])?.id ?? 'todo')
+      setStatus(columnsData[0]?.id ?? 'planning')
     }
   }
 
@@ -72,7 +72,7 @@ export function EpicForm({ isOpen, onClose, onSave, epic, projectId }: EpicFormP
           depends_on: dependsOn,
         })
       } else {
-        const newEpic = await createEpic(projectId, title.trim(), notes.trim())
+        const newEpic = await createEpic(projectId, title.trim(), notes.trim(), status)
         if (dependsOn.length > 0) {
           await updateEpic(newEpic.id, { depends_on: dependsOn })
         }

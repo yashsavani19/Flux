@@ -51,7 +51,7 @@ import {
   deleteBlobClient,
   type WebhookEventType,
 } from '@flux/shared/client';
-import { setStorageAdapter, initStore, WEBHOOK_EVENT_TYPES, type Column, type Guardrail } from '@flux/shared';
+import { getTaskColumnTransitionError, setStorageAdapter, initStore, WEBHOOK_EVENT_TYPES, type Column, type Guardrail } from '@flux/shared';
 import { findFluxDir, loadEnvLocal, readConfig, resolveDataPath } from '@flux/shared/config';
 import { createAdapter } from '@flux/shared/adapters';
 import { createFilesystemBlobStorage, setBlobStorage } from '@flux/shared/blob-storage';
@@ -812,14 +812,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const error = getStatusValidationError(currentTask.project_id, args.status, columns);
         if (error) return { content: [{ type: 'text', text: error }], isError: true };
         targetColumn = columns.find(column => column.id === args.status);
-        const currentColumn = columns.find(column => column.id === currentTask.status);
-        if (targetColumn?.role === 'active' && currentColumn?.role === 'backlog') {
-          const readyColumns = columns
-            .filter(column => column.role === 'ready')
-            .map(column => `${column.id} (${column.label})`)
-            .join(', ');
+        const transitionError = getTaskColumnTransitionError(columns, currentTask.status, args.status as string);
+        if (transitionError) {
           return {
-            content: [{ type: 'text', text: `Cannot start a task from a not-started column. Move it to a startable column first: ${readyColumns}.` }],
+            content: [{ type: 'text', text: transitionError }],
             isError: true,
           };
         }
@@ -877,14 +873,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const error = getStatusValidationError(currentTask.project_id, args?.status, columns);
       if (error) return { content: [{ type: 'text', text: error }], isError: true };
       const targetColumn = columns.find(column => column.id === args?.status);
-      const currentColumn = columns.find(column => column.id === currentTask.status);
-      if (targetColumn?.role === 'active' && currentColumn?.role === 'backlog') {
-        const readyColumns = columns
-          .filter(column => column.role === 'ready')
-          .map(column => `${column.id} (${column.label})`)
-          .join(', ');
+      const transitionError = getTaskColumnTransitionError(columns, currentTask.status, args?.status as string);
+      if (transitionError) {
           return {
-            content: [{ type: 'text', text: `Cannot start a task from a not-started column. Move it to a startable column first: ${readyColumns}.` }],
+            content: [{ type: 'text', text: transitionError }],
             isError: true,
           };
       }

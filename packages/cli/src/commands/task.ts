@@ -12,6 +12,7 @@ import {
   type Priority,
   type Guardrail,
 } from '../client.js';
+import { getTaskColumnTransitionError } from '@flux/shared';
 
 const RESET = '\x1b[0m';
 import { output } from '../index.js';
@@ -264,7 +265,6 @@ export async function taskCommand(
       }
 
       const columns = await getColumns(current.project_id);
-      const currentColumn = columns.find(column => column.id === current.status);
       const activeColumn = columns.find(column => column.role === 'active');
       if (!activeColumn) {
         console.error(`Project ${current.project_id} has no being-worked-on column.`);
@@ -272,12 +272,9 @@ export async function taskCommand(
       }
 
       // Agent workflow gate: backlog -> ready -> active
-      if (currentColumn?.role === 'backlog') {
-        const readyColumns = columns
-          .filter(column => column.role === 'ready')
-          .map(column => `${column.id} (${column.label})`)
-          .join(', ');
-        console.error(`Task is in a not-started column. Move it to a startable column first: ${readyColumns}.`);
+      const transitionError = getTaskColumnTransitionError(columns, current.status, activeColumn.id);
+      if (transitionError) {
+        console.error(transitionError);
         process.exit(1);
       }
 

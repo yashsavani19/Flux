@@ -12,6 +12,7 @@ import {
   API_ORIGIN,
   getProject,
   getTasks,
+  getColumnTaskCounts,
   getEpics,
   updateEpic,
   updateTask,
@@ -53,6 +54,7 @@ const getEpicColor = (epicId: string, epics: Epic[]): string => {
 
 export function Board({ projectId }: BoardProps) {
   const [tasks, setTasks] = useState<TaskWithBlocked[]>([]);
+  const [taskCounts, setTaskCounts] = useState<Record<string, number>>({});
   const [epics, setEpics] = useState<Epic[]>([]);
   const [projectName, setProjectName] = useState("");
   const [loading, setLoading] = useState(true);
@@ -142,7 +144,7 @@ export function Board({ projectId }: BoardProps) {
         window.clearTimeout(refreshTimeout);
       }
       refreshTimeout = window.setTimeout(() => {
-        refreshData();
+        void Promise.all([refreshData(), reloadColumns()]);
       }, 100);
     };
 
@@ -179,7 +181,7 @@ export function Board({ projectId }: BoardProps) {
       }
       source?.close();
     };
-  }, [projectId]);
+  }, [projectId, reloadColumns]);
 
   const loadProject = async () => {
     if (!projectId) return;
@@ -196,12 +198,14 @@ export function Board({ projectId }: BoardProps) {
 
   const refreshData = async () => {
     if (!projectId) return;
-    const [tasksData, epicsData] = await Promise.all([
+    const [tasksData, epicsData, taskCountData] = await Promise.all([
       getTasks(projectId),
       getEpics(projectId),
+      getColumnTaskCounts(projectId),
     ]);
     setTasks(tasksData);
     setEpics(epicsData);
+    setTaskCounts(taskCountData);
   };
 
   // Handle drag end
@@ -281,15 +285,6 @@ export function Board({ projectId }: BoardProps) {
     return tasks.filter((t) => doneIds.has(t.status)).length;
   }, [tasks, columns]);
 
-  // Tasks per column, used by the manage dialog to say what a delete will move.
-  const taskCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const task of tasks) {
-      counts[task.status] = (counts[task.status] ?? 0) + 1;
-    }
-    return counts;
-  }, [tasks]);
-
   const hiddenColumnCount = columns.filter((c) =>
     collapsedColumns.has(c.id)
   ).length;
@@ -328,6 +323,14 @@ export function Board({ projectId }: BoardProps) {
 
   // Get total task count
   const totalTaskCount = tasks.filter(filterTask).length;
+
+  // A selected filter cannot keep pointing at a column removed by another
+  // writer, otherwise every task appears to vanish after the SSE refresh.
+  useEffect(() => {
+    if (filterStatus !== "all" && !columns.some((column) => column.id === filterStatus)) {
+      setFilterStatus("all");
+    }
+  }, [columns, filterStatus]);
 
   if (loading) {
     return (

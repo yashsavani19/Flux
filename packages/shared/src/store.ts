@@ -1,5 +1,5 @@
 import type { Task, Epic, Project, Store, Blob, Webhook, WebhookDelivery, WebhookEventType, WebhookPayload, StoreWithWebhooks, Priority, CommentAuthor, TaskComment, Guardrail, ApiKey, KeyScope, CliAuthRequest, Column, ColumnRole } from './types.js';
-import { DEFAULT_COLUMNS, sortColumns, validateColumns } from './types.js';
+import { DEFAULT_COLUMNS, getTaskColumnTransitionError, sortColumns, validateColumns } from './types.js';
 
 // Auth functions injected at runtime (server-side only, uses Node crypto)
 type AuthFunctions = {
@@ -275,7 +275,7 @@ export function setColumns(projectId: string, columns: Column[]): Column[] {
   // No task may be stranded in a column that no longer exists.
   const ids = new Set(normalised.map(c => c.id));
   const stranded = db.data.tasks.filter(
-    t => t.project_id === projectId && !t.archived && !ids.has(t.status)
+    t => t.project_id === projectId && !ids.has(t.status)
   );
   if (stranded.length > 0) {
     const lost = [...new Set(stranded.map(t => t.status))].join(', ');
@@ -497,6 +497,18 @@ export function createTask(
 export function updateTask(id: string, updates: Partial<Omit<Task, 'id'>>): Task | undefined {
   const index = db.data.tasks.findIndex(t => t.id === id);
   if (index === -1) return undefined;
+  const currentTask = db.data.tasks[index];
+  if (updates.project_id !== undefined && updates.project_id !== currentTask.project_id) {
+    throw new Error('A task cannot be moved to a different project.');
+  }
+  if (updates.status !== undefined) {
+    const columns = getColumns(currentTask.project_id);
+    if (!columns.some(column => column.id === updates.status)) {
+      throw new Error(`Unknown status ${JSON.stringify(updates.status)} for project ${currentTask.project_id}.`);
+    }
+    const transitionError = getTaskColumnTransitionError(columns, currentTask.status, updates.status);
+    if (transitionError) throw new Error(transitionError);
+  }
   // Validate dependencies
   if (updates.depends_on) {
     for (const depId of updates.depends_on) {
@@ -512,7 +524,8 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id'>>): Task
     ...updates,
     guardrails: updates.guardrails !== undefined ? ensureGuardrailIds(updates.guardrails) : undefined,
   };
-  if (updates.status !== undefined && !isActiveColumn(db.data.tasks[index].project_id, updates.status)) {
+  const resultingStatus = updates.status ?? currentTask.status;
+  if (!isActiveColumn(currentTask.project_id, resultingStatus)) {
     processedUpdates.workers = [];
   }
   db.data.tasks[index] = {

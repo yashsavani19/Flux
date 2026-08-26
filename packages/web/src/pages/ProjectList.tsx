@@ -6,6 +6,7 @@ import {
   PencilSquareIcon,
 } from "@heroicons/react/24/outline";
 import {
+  API_ORIGIN,
   deleteProject,
   getProjects,
   resetDatabase,
@@ -50,8 +51,7 @@ export function ProjectList(_props: RoutableProps) {
       return;
     }
     setSseStatus("unknown");
-    const eventsBase = import.meta.env.DEV ? "http://localhost:3000" : "";
-    const source = new EventSource(`${eventsBase}/api/events`);
+    const source = new EventSource(`${API_ORIGIN}/api/events`);
     let connected = false;
     const timeoutId = window.setTimeout(() => {
       if (!connected) setSseStatus("offline");
@@ -159,14 +159,10 @@ export function ProjectList(_props: RoutableProps) {
     }
   };
 
-  const apiOrigin =
-    typeof window === "undefined" ? "" : window.location.origin;
-  const apiLocation = import.meta.env.DEV
-    ? "http://localhost:3000/api"
-    : `${apiOrigin}/api`;
-  const sseLocation = import.meta.env.DEV
-    ? "http://localhost:3000/api/events"
-    : `${apiOrigin}/api/events`;
+  const displayedOrigin = API_ORIGIN ||
+    (typeof window === "undefined" ? "" : window.location.origin);
+  const apiLocation = `${displayedOrigin}/api`;
+  const sseLocation = `${displayedOrigin}/api/events`;
 
   const statusLabel = (status: "online" | "offline" | "unknown") => {
     if (status === "online") return "Online";
