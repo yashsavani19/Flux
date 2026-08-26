@@ -1,5 +1,21 @@
 # Flux &middot; [![CI](https://github.com/sirsjg/flux/actions/workflows/ci.yml/badge.svg)](https://github.com/sirsjg/flux/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) ![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?style=flat&logo=typescript&logoColor=white) ![Preact](https://img.shields.io/badge/Preact-673ab8?style=flat&logo=preact&logoColor=white) ![Bun](https://img.shields.io/badge/Bun-fbf0df?style=flat&logo=bun&logoColor=black) ![Docker](https://img.shields.io/badge/Docker-2496ed?style=flat&logo=docker&logoColor=white) ![MCP](https://img.shields.io/badge/MCP-enabled-f59e0b?style=flat)
 
+> ### This is a fork
+>
+> This repo is a fork of **[sirsjg/flux](https://github.com/sirsjg/flux)** by Steve Grehan, used under the
+> MIT licence. **Upstream is the source of truth** — the credit for Flux belongs there. This copy adds
+> per-project **custom board columns** on top: add, rename, recolour, reorder and delete the columns on
+> your board instead of living with the fixed four.
+>
+> Read **[CHANGES-FROM-UPSTREAM.md](CHANGES-FROM-UPSTREAM.md)** for exactly what differs and why, and
+> **[SETUP.md](SETUP.md)** to get it running.
+>
+> One thing worth knowing before you follow upstream's instructions below: the published
+> `sirsjg/flux-mcp` Docker image is **upstream's build and does not contain this fork's changes**. Setup
+> here builds from source instead. Where the text below tells you to pull that image, use
+> [SETUP.md](SETUP.md).
+
+
 > Flux is a **completely open, hackable, unopinionated task management engine**.
 
 <p align="center">
