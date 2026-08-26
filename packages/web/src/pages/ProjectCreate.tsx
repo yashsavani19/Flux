@@ -19,15 +19,15 @@ export function ProjectCreate(_props: RoutableProps) {
     <div class="min-h-screen bg-base-200 flex items-center justify-center">
       <div class="card w-96 bg-base-100 shadow-xl">
         <div class="card-body">
-          <h2 class="card-title text-2xl mb-4">Create Project</h2>
+          <h2 class="card-title text-2xl mb-4">Create project</h2>
           <form onSubmit={handleSubmit}>
             <div class="form-control mb-4">
               <label class="label">
-                <span class="label-text">Project Name *</span>
+                <span class="label-text">Project name *</span>
               </label>
               <input
                 type="text"
-                placeholder="My Kanban Project"
+                placeholder="My kanban project"
                 class="input input-bordered w-full"
                 value={name}
                 onInput={(e) => setName((e.target as HTMLInputElement).value)}
@@ -50,7 +50,7 @@ export function ProjectCreate(_props: RoutableProps) {
                 Cancel
               </button>
               <button type="submit" class="btn btn-primary" disabled={!name.trim() || submitting}>
-                {submitting ? <span class="loading loading-spinner loading-sm"></span> : 'Create Project'}
+                {submitting ? <span class="loading loading-spinner loading-sm"></span> : 'Create project'}
               </button>
             </div>
           </form>

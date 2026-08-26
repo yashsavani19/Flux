@@ -1,7 +1,13 @@
-import type { Task, Epic, Project, Webhook, WebhookDelivery, WebhookEventType, TaskComment, CommentAuthor, KeyScope, Blob as FluxBlob } from '@flux/shared';
+import type { Task, Epic, Project, Column, Webhook, WebhookDelivery, WebhookEventType, TaskComment, CommentAuthor, KeyScope, Blob as FluxBlob } from '@flux/shared';
 import { getToken } from './auth';
 
-const API_BASE = import.meta.env.DEV ? 'http://localhost:3000/api' : '/api';
+// VITE_API_URL lets a dev build point at a server other than the default one,
+// e.g. when running a second instance on another port.
+export const API_ORIGIN =
+  (import.meta.env.VITE_API_URL as string | undefined) ??
+  (import.meta.env.DEV ? 'http://localhost:3000' : '');
+
+const API_BASE = `${API_ORIGIN}/api`;
 
 // Create fetch wrapper with auth headers
 function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
@@ -11,6 +17,18 @@ function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
     headers.set('Authorization', `Bearer ${token}`);
   }
   return fetch(url, { ...options, headers });
+}
+
+// Pull the server's human-readable `error` off a failed response so the UI can
+// show what actually went wrong instead of a generic failure.
+async function readError(res: Response): Promise<string> {
+  try {
+    const body = await res.json();
+    if (body && typeof body.error === 'string' && body.error.trim()) return body.error;
+  } catch {
+    // Response had no JSON body.
+  }
+  return `Request failed (${res.status})`;
 }
 
 // Project with stats from API
@@ -57,6 +75,44 @@ export async function updateProject(id: string, updates: Partial<Omit<Project, '
 
 export async function deleteProject(id: string): Promise<void> {
   await fetch(`${API_BASE}/projects/${id}`, { method: 'DELETE' });
+}
+
+// ============ Column Operations ============
+
+// Read a project's board columns. A project that has never been customised
+// still gets the four defaults back from the server.
+export async function getColumns(projectId: string): Promise<Column[]> {
+  const res = await authFetch(`${API_BASE}/projects/${projectId}/columns`);
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+// Whole-list replace. Add, rename, recolour and reorder all save through here,
+// so ordering can never race against another writer.
+export async function saveColumns(projectId: string, columns: Column[]): Promise<Column[]> {
+  const res = await authFetch(`${API_BASE}/projects/${projectId}/columns`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(columns),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
+}
+
+// Remove a column, moving every task in it into `moveTasksTo` first. Tasks are
+// never destroyed.
+export async function deleteColumn(
+  projectId: string,
+  columnId: string,
+  moveTasksTo: string
+): Promise<Column[]> {
+  const res = await authFetch(`${API_BASE}/projects/${projectId}/columns/${columnId}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moveTasksTo }),
+  });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.json();
 }
 
 // ============ Epic Operations ============
