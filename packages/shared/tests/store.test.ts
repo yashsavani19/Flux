@@ -188,15 +188,10 @@ describe('store', () => {
     );
   });
 
-  it('enforces the backlog-to-active gate for direct store callers', () => {
-    const project = createProject('Transition gate');
+  it('allows human-path direct store callers to move backlog tasks into active columns', () => {
+    const project = createProject('Human transition');
     const task = createTask(project.id, 'Task');
 
-    expect(() => updateTask(task.id, { status: 'in_progress' })).toThrow(
-      'Move it to a startable column first'
-    );
-    expect(getTask(task.id)?.status).toBe('planning');
-    updateTask(task.id, { status: 'todo' });
     expect(updateTask(task.id, { status: 'in_progress' })?.status).toBe('in_progress');
   });
 

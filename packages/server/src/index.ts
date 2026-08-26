@@ -20,7 +20,6 @@ import {
   setColumns,
   deleteColumn,
   columnsEqual,
-  getTaskColumnTransitionError,
   isActiveColumn,
   getEpics,
   getEpic,
@@ -515,13 +514,6 @@ app.post('/api/projects/:projectId/tasks', async (c) => {
   if (body.status !== undefined) {
     const error = getStatusValidationError(projectId, body.status);
     if (error) return c.json({ error }, 400);
-    const columns = getColumns(projectId);
-    const transitionError = getTaskColumnTransitionError(
-      columns,
-      columns[0]!.id,
-      body.status
-    );
-    if (transitionError) return c.json({ error: transitionError }, 400);
   }
   let task = createTask(projectId, body.title, body.epic_id, {
     priority: body.priority,
@@ -554,12 +546,6 @@ app.patch('/api/tasks/:id', async (c) => {
   if (body.status !== undefined) {
     const error = getStatusValidationError(previous.project_id, body.status);
     if (error) return c.json({ error }, 400);
-    const transitionError = getTaskColumnTransitionError(
-      getColumns(previous.project_id),
-      previous.status,
-      body.status
-    );
-    if (transitionError) return c.json({ error: transitionError }, 400);
   }
   // Agent team worker tracking
   const agentName = typeof body.agent_name === 'string' ? body.agent_name : undefined;

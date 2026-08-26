@@ -1,5 +1,5 @@
 import type { Task, Epic, Project, Store, Blob, Webhook, WebhookDelivery, WebhookEventType, WebhookPayload, StoreWithWebhooks, Priority, CommentAuthor, TaskComment, Guardrail, ApiKey, KeyScope, CliAuthRequest, Column, ColumnRole } from './types.js';
-import { DEFAULT_COLUMNS, getTaskColumnTransitionError, sortColumns, validateColumns } from './types.js';
+import { DEFAULT_COLUMNS, sortColumns, validateColumns } from './types.js';
 
 // Auth functions injected at runtime (server-side only, uses Node crypto)
 type AuthFunctions = {
@@ -506,8 +506,6 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id'>>): Task
     if (!columns.some(column => column.id === updates.status)) {
       throw new Error(`Unknown status ${JSON.stringify(updates.status)} for project ${currentTask.project_id}.`);
     }
-    const transitionError = getTaskColumnTransitionError(columns, currentTask.status, updates.status);
-    if (transitionError) throw new Error(transitionError);
   }
   // Validate dependencies
   if (updates.depends_on) {

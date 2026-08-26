@@ -306,7 +306,7 @@ describe('task command', () => {
       expect(getLogs()).toContain('Started task: task-1');
     });
 
-    it('rejects starting a planning task', async () => {
+    it('refuses the agent CLI start path from a backlog-role column', async () => {
       mockGetTask.mockResolvedValue({ id: 'task-1', title: 'Test', status: 'planning', project_id: 'proj-1' });
 
       await expect(taskCommand('start', ['task-1'], {}, false)).rejects.toThrow('process.exit(1)');

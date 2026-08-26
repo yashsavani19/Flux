@@ -264,8 +264,8 @@ export function columnsEqual(a: Column[], b: Column[]): boolean {
   return JSON.stringify(normalise(a)) === JSON.stringify(normalise(b));
 }
 
-// The one guarded task transition. Keeping this role-based and shared prevents
-// REST, MCP, CLI and direct-store callers from drifting apart.
+// Agent-path guardrail: MCP and CLI deliberately enforce this, while REST and
+// direct store writes do not because a human board move is the start decision.
 export function getTaskColumnTransitionError(
   columns: Column[],
   currentColumnId: string,

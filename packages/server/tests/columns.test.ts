@@ -254,7 +254,7 @@ describe('column REST API', () => {
     expect(await fetch(`${baseUrl}/api/tasks/${archived.id}`).then(response => response.json())).toMatchObject({ status: 'triage', archived: true });
   });
 
-  it('enforces backlog-to-active transitions over REST without partial creates', async () => {
+  it('allows the human REST path to create or move backlog tasks directly into active columns', async () => {
     const created = await fetch(`${baseUrl}/api/projects`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -267,21 +267,21 @@ describe('column REST API', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: 'Direct active', status: 'in_progress' }),
     });
-    expect(directCreate.status).toBe(400);
-    expect(await fetch(`${baseUrl}/api/projects/${project.id}/tasks`).then(response => response.json())).toEqual([]);
+    expect(directCreate.status).toBe(201);
+    expect(await directCreate.json()).toMatchObject({ status: 'in_progress' });
 
     const task = await fetch(`${baseUrl}/api/projects/${project.id}/tasks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: 'Gated task' }),
     }).then(response => response.json());
-    const rejected = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+    const moved = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'in_progress' }),
     });
-    expect(rejected.status).toBe(400);
-    expect(await fetch(`${baseUrl}/api/tasks/${task.id}`).then(response => response.json())).toMatchObject({ status: 'planning' });
+    expect(moved.status).toBe(200);
+    expect(await moved.json()).toMatchObject({ status: 'in_progress' });
   });
 
   it('rejects column changes through the general project patch route', async () => {

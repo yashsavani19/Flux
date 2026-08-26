@@ -79,6 +79,35 @@ describe('column MCP tools', () => {
     expect(text).toContain('done (Done)');
   });
 
+  it('refuses agent backlog-to-active moves through both MCP status paths', async () => {
+    const created = await client.callTool({
+      name: 'create_task',
+      arguments: { project_id: projectId, title: 'Agent-gated task' },
+    });
+    const taskId = (created.content[0] as { text: string }).text.match(/ID: (.+)$/)![1];
+
+    for (const name of ['move_task_status', 'update_task']) {
+      const result = await client.callTool({
+        name,
+        arguments: { task_id: taskId, status: 'in_progress' },
+      });
+      expect(result.isError).toBe(true);
+      expect((result.content[0] as { text: string }).text).toContain(
+        'Move it to a startable column first'
+      );
+    }
+
+    const tasks = await client.callTool({
+      name: 'list_tasks',
+      arguments: { project_id: projectId },
+    });
+    expect(
+      JSON.parse((tasks.content[0] as { text: string }).text)
+        .find((task: { id: string }) => task.id === taskId)
+        .status
+    ).toBe('planning');
+  });
+
   it('clears workers on non-active destinations in both task move paths', async () => {
     const created = await client.callTool({
       name: 'create_task',
