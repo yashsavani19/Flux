@@ -29,6 +29,7 @@ import {
 } from "../components";
 import { useBoardPreferences } from "../hooks/useBoardPreferences";
 import { useProjectColumns } from "../hooks/useProjectColumns";
+import { useSyncedHorizontalScroll } from "../hooks/useSyncedHorizontalScroll";
 import {
   ArrowLeftIcon,
   Bars3BottomLeftIcon,
@@ -81,6 +82,7 @@ export function Board({ projectId }: BoardProps) {
   // This project's board columns
   const {
     columns,
+    loading: columnsLoading,
     error: columnsError,
     reload: reloadColumns,
     applySaved: applySavedColumns,
@@ -97,6 +99,9 @@ export function Board({ projectId }: BoardProps) {
     pruneCollapsedColumns,
     toggleEpicCollapse,
   } = useBoardPreferences(projectId ?? "");
+
+  // Every swimlane scrolls sideways as one, so the lanes stay comparable.
+  const registerScrollPane = useSyncedHorizontalScroll();
 
   // Configure sensors with activation constraint to allow clicks
   const sensors = useSensors(
@@ -115,10 +120,14 @@ export function Board({ projectId }: BoardProps) {
     loadProject();
   }, [projectId]);
 
-  // A column that no longer exists must not keep a slot in the saved preferences.
+  // A column that no longer exists must not keep a slot in the saved
+  // preferences. Only ever prune against a column list we actually read - the
+  // placeholder shown while loading, or after a failure, is not evidence that a
+  // remembered column is gone.
   useEffect(() => {
+    if (columnsLoading || columnsError) return;
     pruneCollapsedColumns(columns.map((c) => c.id));
-  }, [columns, pruneCollapsedColumns]);
+  }, [columns, columnsLoading, columnsError, pruneCollapsedColumns]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -298,15 +307,20 @@ export function Board({ projectId }: BoardProps) {
     return true;
   };
 
+  // An unassigned task can carry epic_id as undefined, null or "" depending on
+  // how it was written. Treat all three as unassigned so none of them can fall
+  // off the board.
+  const epicOf = (task: TaskWithBlocked) => task.epic_id || undefined;
+
   // Get tasks for a specific column and epic
   const getColumnTasks = (columnId: string, epicId: string | undefined) =>
     tasks
-      .filter((t) => t.epic_id === epicId && t.status === columnId)
+      .filter((t) => epicOf(t) === epicId && t.status === columnId)
       .filter(filterTask);
 
   // Get task count for an epic
   const getEpicTaskCount = (epicId: string | undefined) =>
-    tasks.filter((t) => t.epic_id === epicId).filter(filterTask).length;
+    tasks.filter((t) => epicOf(t) === epicId).filter(filterTask).length;
 
   // Generate drop zone ID
   const getDropZoneId = (columnId: string, epicId: string | undefined) =>
@@ -331,20 +345,20 @@ export function Board({ projectId }: BoardProps) {
     >
       <div class="min-h-screen bg-base-200">
         {/* Header */}
-        <div class="navbar bg-base-100 shadow-lg mb-4">
-          <div class="flex-1 flex items-center">
+        <div class="navbar bg-base-100 shadow-lg mb-4 flex-wrap gap-y-2">
+          <div class="w-full sm:w-auto sm:flex-1 flex items-center min-w-0">
             <button class="btn btn-ghost btn-circle" onClick={() => route("/")}>
               <ArrowLeftIcon className="h-5 w-5" />
             </button>
-            <div class="flex items-center gap-2 px-2">
-              <Squares2X2Icon className="h-6 w-6 text-primary" />
-              <h1 class="text-xl font-bold">{projectName}</h1>
-              <span class="text-base-content/50 text-lg ml-1">
+            <div class="flex items-center gap-2 px-2 min-w-0">
+              <Squares2X2Icon className="h-6 w-6 text-primary flex-shrink-0" />
+              <h1 class="text-xl font-bold truncate">{projectName}</h1>
+              <span class="text-base-content/50 text-lg ml-1 whitespace-nowrap">
                 {totalTaskCount} tasks
               </span>
             </div>
           </div>
-          <div class="flex gap-2">
+          <div class="w-full sm:w-auto flex gap-2 justify-end flex-shrink-0">
             <ThemeToggle />
             <button
               class="btn btn-primary btn-sm"
@@ -558,6 +572,7 @@ export function Board({ projectId }: BoardProps) {
                         onTaskClick={openEditTask}
                         onAddTask={() => openNewTask(epic.id)}
                         addTaskTitle="Add task to this epic"
+                        registerScrollPane={registerScrollPane}
                       />
                     </div>
                   )}
@@ -600,6 +615,7 @@ export function Board({ projectId }: BoardProps) {
                     onTaskClick={openEditTask}
                     onAddTask={() => openNewTask(undefined)}
                     addTaskTitle="Add unassigned task"
+                    registerScrollPane={registerScrollPane}
                   />
                 </div>
               )}

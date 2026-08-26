@@ -30,12 +30,32 @@ interface ManageColumnsModalProps {
   onSaved: (columns: Column[]) => void | Promise<void>
 }
 
-function withOrder(columns: Column[]): Column[] {
+// A row keeps one `uid` for as long as the dialog is open. The column's real
+// id can still change while a brand-new column is being named, and a changing
+// key would tear the row's input out of the DOM mid-keystroke.
+type DraftColumn = Column & { uid: string }
+
+let uidCounter = 0
+function nextUid(): string {
+  uidCounter += 1
+  return `row-${uidCounter}`
+}
+
+function toDraft(columns: Column[]): DraftColumn[] {
+  return columns.map((column, index) => ({ ...column, order: index, uid: nextUid() }))
+}
+
+function withOrder(columns: DraftColumn[]): DraftColumn[] {
   return columns.map((column, index) => ({ ...column, order: index }))
 }
 
-function sameList(a: Column[], b: Column[]): boolean {
-  return JSON.stringify(withOrder(a)) === JSON.stringify(withOrder(b))
+// What actually gets sent to the server: the shared Column shape, nothing else.
+function toColumns(draft: DraftColumn[]): Column[] {
+  return draft.map(({ uid: _uid, ...column }, index) => ({ ...column, order: index }))
+}
+
+function sameList(a: DraftColumn[], b: Column[]): boolean {
+  return JSON.stringify(toColumns(a)) === JSON.stringify(b.map((c, i) => ({ ...c, order: i })))
 }
 
 export function ManageColumnsModal({
@@ -47,7 +67,7 @@ export function ManageColumnsModal({
   loadError,
   onSaved,
 }: ManageColumnsModalProps) {
-  const [draft, setDraft] = useState<Column[]>(columns)
+  const [draft, setDraft] = useState<DraftColumn[]>(() => toDraft(columns))
   const [savedIds, setSavedIds] = useState<string[]>(() => columns.map(c => c.id))
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -59,14 +79,14 @@ export function ManageColumnsModal({
   // Start from whatever is currently on the board every time the modal opens.
   useEffect(() => {
     if (!isOpen) return
-    setDraft(withOrder(columns))
+    setDraft(toDraft(columns))
     setSavedIds(columns.map(c => c.id))
     setSaveError(null)
     setDeleteTargetId(null)
     setDeleteError(null)
   }, [isOpen, columns])
 
-  const validationError = useMemo(() => validateColumns(draft), [draft])
+  const validationError = useMemo(() => validateColumns(toColumns(draft)), [draft])
   const dirty = !sameList(draft, columns)
   const deleteTarget = draft.find(c => c.id === deleteTargetId) ?? null
   const moveOptions = draft.filter(c => c.id !== deleteTargetId)
@@ -113,18 +133,25 @@ export function ManageColumnsModal({
       const id = slugifyColumnId(label, prev.map(c => c.id))
       const color =
         COLUMN_COLORS.find(candidate => !prev.some(c => c.color === candidate)) ?? COLUMN_COLORS[0]
-      return withOrder([...prev, { id, label, color, role: 'ready' as ColumnRole, order: prev.length }])
+      return withOrder([
+        ...prev,
+        { id, label, color, role: 'ready' as ColumnRole, order: prev.length, uid: nextUid() },
+      ])
     })
   }
 
-  // Why a column cannot be removed, in the shared validator's own words.
-  const blockedReason = (column: Column): string | null =>
-    validateColumns(draft.filter(c => c.id !== column.id))
+  // Why a column cannot be removed, in the shared validator's own words. Only
+  // meaningful once the list itself is valid - otherwise every row would report
+  // whatever is wrong somewhere else.
+  const blockedReason = (column: DraftColumn): string | null => {
+    if (validationError) return null
+    return validateColumns(toColumns(draft.filter(c => c.uid !== column.uid)))
+  }
 
-  const handleDeleteClick = (column: Column) => {
+  const handleDeleteClick = (column: DraftColumn) => {
     // A column that was never saved has no tasks and no server record - drop it.
     if (isNew(column.id)) {
-      setDraft(prev => withOrder(prev.filter(c => c.id !== column.id)))
+      setDraft(prev => withOrder(prev.filter(c => c.uid !== column.uid)))
       return
     }
     setDeleteError(null)
@@ -140,10 +167,10 @@ export function ManageColumnsModal({
       // Save staged edits first: a rename, or a freshly added destination
       // column, has to exist on the server before the tasks can be moved into it.
       if (dirty) {
-        await saveColumns(projectId, withOrder(draft))
+        await saveColumns(projectId, toColumns(draft))
       }
       const remaining = await deleteColumn(projectId, deleteTarget.id, moveTasksTo)
-      setDraft(withOrder(remaining))
+      setDraft(toDraft(remaining))
       setSavedIds(remaining.map(c => c.id))
       await onSaved(remaining)
       setDeleteTargetId(null)
@@ -156,7 +183,7 @@ export function ManageColumnsModal({
 
   const handleSave = async () => {
     if (saving) return
-    const error = validateColumns(draft)
+    const error = validateColumns(toColumns(draft))
     if (error) {
       setSaveError(error)
       return
@@ -164,7 +191,7 @@ export function ManageColumnsModal({
     setSaving(true)
     setSaveError(null)
     try {
-      const saved = await saveColumns(projectId, withOrder(draft))
+      const saved = await saveColumns(projectId, toColumns(draft))
       await onSaved(saved)
       onClose()
     } catch (e) {
@@ -204,9 +231,10 @@ export function ManageColumnsModal({
         <div class="max-h-[55vh] overflow-y-auto pr-1 space-y-3">
           {draft.map((column, index) => {
             const reason = blockedReason(column)
+            const removeBlocked = reason ?? (validationError ? 'Fix the problem below first.' : null)
             const count = taskCounts[column.id] ?? 0
             return (
-              <div key={column.id} class="border border-base-300 rounded-lg p-3">
+              <div key={column.uid} class="border border-base-300 rounded-lg p-3">
                 <div class="flex items-center gap-2">
                   <div class="join join-vertical">
                     <button
@@ -251,8 +279,8 @@ export function ManageColumnsModal({
                     type="button"
                     class="btn btn-ghost btn-xs text-error disabled:text-base-content/30"
                     onClick={() => handleDeleteClick(column)}
-                    disabled={!!reason}
-                    title={reason ?? `Remove ${column.label}`}
+                    disabled={!!removeBlocked}
+                    title={removeBlocked ?? `Remove ${column.label}`}
                     aria-label={`Remove ${column.label}`}
                   >
                     <TrashIcon className="h-4 w-4" />
@@ -343,9 +371,9 @@ export function ManageColumnsModal({
               <span class="block">
                 {(taskCounts[deleteTarget.id] ?? 0) === 0
                   ? `Nothing is in ${deleteTarget.label} right now.`
-                  : `${taskCounts[deleteTarget.id]} task${
-                      taskCounts[deleteTarget.id] === 1 ? '' : 's'
-                    } sit in ${deleteTarget.label}. No task is deleted — pick where they should go.`}
+                  : taskCounts[deleteTarget.id] === 1
+                  ? `Moving 1 task out of ${deleteTarget.label}. Nothing is deleted — pick where it should go.`
+                  : `Moving ${taskCounts[deleteTarget.id]} tasks out of ${deleteTarget.label}. Nothing is deleted — pick where they should go.`}
               </span>
               <span class="block">
                 <span class="block text-xs text-base-content/60 mb-1">Move tasks to</span>

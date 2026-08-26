@@ -24,6 +24,8 @@ interface BoardColumnsProps {
   onTaskClick: (task: TaskWithBlocked) => void
   onAddTask: () => void
   addTaskTitle: string
+  /** Registers this lane's scroll container so every lane scrolls as one. */
+  registerScrollPane?: (node: HTMLElement | null) => void
 }
 
 /**
@@ -44,6 +46,7 @@ export function BoardColumns({
   onTaskClick,
   onAddTask,
   addTaskTitle,
+  registerScrollPane,
 }: BoardColumnsProps) {
   const isCollapsed = (column: Column) => collapsedColumns.has(column.id)
   const expandedCount = columns.filter(c => !isCollapsed(c)).length
@@ -54,7 +57,7 @@ export function BoardColumns({
     .join(' ')
 
   return (
-    <div class="overflow-x-auto pb-1">
+    <div class="overflow-x-auto pb-1" ref={registerScrollPane}>
       <div
         class="grid gap-x-4 gap-y-3"
         style={{ gridTemplateColumns, gridTemplateRows: 'auto minmax(0, 1fr)' }}
