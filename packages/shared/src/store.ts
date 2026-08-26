@@ -284,6 +284,18 @@ export function setColumns(projectId: string, columns: Column[]): Column[] {
     );
   }
 
+  // Only a task sitting in an active-role column may carry workers. Changing a
+  // column's role in place moves no tasks, so reconcile here or a column flipped
+  // from active to ready would leave phantom agents attached to its cards.
+  const roleById = new Map(normalised.map(c => [c.id, c.role]));
+  db.data.tasks.forEach(task => {
+    if (task.project_id !== projectId) return;
+    if (roleById.get(task.status) !== 'active' && task.workers && task.workers.length > 0) {
+      task.workers = [];
+      task.updated_at = new Date().toISOString();
+    }
+  });
+
   project.columns = normalised;
   db.write();
   return normalised.map(c => ({ ...c }));

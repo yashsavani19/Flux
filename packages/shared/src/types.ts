@@ -310,17 +310,17 @@ export const WEBHOOK_EVENT_TYPES: WebhookEventType[] = [
 
 // Webhook event type labels for UI
 export const WEBHOOK_EVENT_LABELS: Record<WebhookEventType, string> = {
-  'project.created': 'Project Created',
-  'project.updated': 'Project Updated',
-  'project.deleted': 'Project Deleted',
-  'epic.created': 'Epic Created',
-  'epic.updated': 'Epic Updated',
-  'epic.deleted': 'Epic Deleted',
-  'task.created': 'Task Created',
-  'task.updated': 'Task Updated',
-  'task.deleted': 'Task Deleted',
-  'task.status_changed': 'Task Status Changed',
-  'task.archived': 'Task Archived',
+  'project.created': 'Project created',
+  'project.updated': 'Project updated',
+  'project.deleted': 'Project deleted',
+  'epic.created': 'Epic created',
+  'epic.updated': 'Epic updated',
+  'epic.deleted': 'Epic deleted',
+  'task.created': 'Task created',
+  'task.updated': 'Task updated',
+  'task.deleted': 'Task deleted',
+  'task.status_changed': 'Task moved',
+  'task.archived': 'Task archived',
 };
 
 // Webhook configuration
