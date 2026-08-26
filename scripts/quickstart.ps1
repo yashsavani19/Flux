@@ -5,21 +5,13 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-$Image = "sirsjg/flux-mcp:latest"
-
-Write-Host "Pulling Flux image..."
-docker pull $Image
-
-Write-Host "Starting Flux web/API..."
-if (docker ps -a --format '{{.Names}}' | Select-String -Quiet '^flux-web$') {
-  docker rm -f flux-web | Out-Null
+# The supported implementation lives in setup.sh so the safety checks and
+# Docker invocation stay identical on macOS, Linux, WSL, and Git Bash.
+if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
+  Write-Error "This Windows entry point delegates to scripts/setup.sh. Install Git for Windows (which includes Git Bash): https://git-scm.com/download/win, then run .\\scripts\\quickstart.ps1 again."
+  exit 1
 }
-docker run -d -p 3000:3000 -v flux-data:/app/packages/data -e FLUX_DATA=/app/packages/data/flux.sqlite --name flux-web $Image bun packages/server/dist/index.js
 
-Write-Host ""
-Write-Host "Flux web UI is running: http://localhost:3000"
-Write-Host ""
-Write-Host "Starting MCP server (Claude/Codex)..."
-Write-Host "Press Ctrl+C to stop the MCP server"
-Write-Host ""
-docker run -i --rm -v flux-data:/app/packages/data $Image
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+& bash (Join-Path $ScriptDir "setup.sh") @args
+exit $LASTEXITCODE
