@@ -370,7 +370,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'list_ready_tasks',
-        description: 'List tasks that are ready to work on (not done, not blocked, sorted by priority). Use this to find actionable work.',
+        description: 'List tasks that are ready to work on (not in a finished-role column, not blocked, sorted by priority). Use this to find actionable work.',
         inputSchema: {
           type: 'object',
           properties: {
