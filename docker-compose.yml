@@ -5,11 +5,19 @@ services:
       args:
         BUILD_SHA: ${BUILD_SHA:-local}
         BUILD_TIME: ${BUILD_TIME:-}
-    container_name: flux-web
+    image: flux-local:compose
+    container_name: ${FLUX_SETUP_CONTAINER_NAME:-flux-local-web}
     ports:
-      - "3000:3000"
+      - "${FLUX_SETUP_PORT:-3001}:${PORT:-3000}"
     volumes:
-      - ./data:/app/packages/data
+      - flux-local-data:/app/packages/data
     environment:
-      - FLUX_DATA=/app/packages/data/data.sqlite
-    restart: unless-stopped
+      FLUX_DIR: /app/packages/data/.flux
+      FLUX_DATA: /app/packages/data/flux.sqlite
+      PORT: ${PORT:-3000}
+      FLUX_API_KEY: ${FLUX_API_KEY:-}
+      FLUX_MAX_BLOB_SIZE: ${FLUX_MAX_BLOB_SIZE:-}
+
+volumes:
+  flux-local-data:
+    name: ${FLUX_SETUP_VOLUME_NAME:-flux-local-data}
