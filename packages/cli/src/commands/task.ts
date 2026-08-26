@@ -1,6 +1,7 @@
 import {
   getTasks,
   getTask,
+  getColumns,
   createTask,
   updateTask,
   deleteTask,
@@ -223,12 +224,24 @@ export async function taskCommand(
         process.exit(1);
       }
 
+      const current = await getTask(id);
+      if (!current) {
+        console.error(`Task not found: ${id}`);
+        process.exit(1);
+      }
+      const columns = await getColumns(current.project_id);
+      const doneColumn = columns.find(column => column.role === 'done');
+      if (!doneColumn) {
+        console.error(`Project ${current.project_id} has no finished-work column.`);
+        process.exit(1);
+      }
+
       // Add comment if provided
       if (flags.note) {
         await addTaskComment(id, flags.note as string, 'user');
       }
 
-      const task = await updateTask(id, { status: 'done' });
+      const task = await updateTask(id, { status: doneColumn.id });
       if (!task) {
         console.error(`Task not found: ${id}`);
         process.exit(1);
@@ -250,13 +263,25 @@ export async function taskCommand(
         process.exit(1);
       }
 
-      // Check workflow: planning -> todo -> in_progress
-      if (current.status === 'planning') {
-        console.error('Task is in planning. Move to todo first: flux task update <id> --status todo');
+      const columns = await getColumns(current.project_id);
+      const currentColumn = columns.find(column => column.id === current.status);
+      const activeColumn = columns.find(column => column.role === 'active');
+      if (!activeColumn) {
+        console.error(`Project ${current.project_id} has no being-worked-on column.`);
         process.exit(1);
       }
 
-      const task = await updateTask(id, { status: 'in_progress' });
+      // Agent workflow gate: backlog -> ready -> active
+      if (currentColumn?.role === 'backlog') {
+        const readyColumns = columns
+          .filter(column => column.role === 'ready')
+          .map(column => `${column.id} (${column.label})`)
+          .join(', ');
+        console.error(`Task is in a not-started column. Move it to a startable column first: ${readyColumns}.`);
+        process.exit(1);
+      }
+
+      const task = await updateTask(id, { status: activeColumn.id });
       output(json ? task : `Started task: ${task!.id}`, json);
       break;
     }
