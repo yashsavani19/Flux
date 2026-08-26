@@ -299,7 +299,8 @@ export function deleteColumn(projectId: string, columnId: string, moveTasksTo: s
   if (columnId === moveTasksTo) {
     throw new Error('Choose a different column to move the tasks into.');
   }
-  if (!columns.some(c => c.id === moveTasksTo)) {
+  const targetColumn = columns.find(c => c.id === moveTasksTo);
+  if (!targetColumn) {
     throw new Error(`Column not found: ${moveTasksTo}`);
   }
 
@@ -310,6 +311,9 @@ export function deleteColumn(projectId: string, columnId: string, moveTasksTo: s
   db.data.tasks.forEach(task => {
     if (task.project_id === projectId && task.status === columnId) {
       task.status = moveTasksTo;
+      if (targetColumn.role !== 'active') {
+        task.workers = [];
+      }
       task.updated_at = new Date().toISOString();
     }
   });
@@ -496,6 +500,9 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id'>>): Task
     ...updates,
     guardrails: updates.guardrails !== undefined ? ensureGuardrailIds(updates.guardrails) : undefined,
   };
+  if (updates.status !== undefined && !isActiveColumn(db.data.tasks[index].project_id, updates.status)) {
+    processedUpdates.workers = [];
+  }
   db.data.tasks[index] = {
     ...db.data.tasks[index],
     ...processedUpdates,

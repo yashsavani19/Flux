@@ -841,7 +841,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!currentWorkers.includes(agentName)) {
           updates.workers = [...currentWorkers, agentName];
         }
-      } else if (targetColumn?.role === 'done') {
+      } else if (targetColumn && targetColumn.role !== 'active') {
         updates.workers = [];
       }
       const task = await updateTask(args?.task_id as string, updates);
@@ -896,7 +896,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (!currentWorkers.includes(agentName)) {
           statusUpdates.workers = [...currentWorkers, agentName];
         }
-      } else if (targetColumn?.role === 'done') {
+      } else if (targetColumn && targetColumn.role !== 'active') {
         statusUpdates.workers = [];
       }
       const task = await updateTask(args?.task_id as string, statusUpdates);

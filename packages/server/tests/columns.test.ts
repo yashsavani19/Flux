@@ -5,7 +5,7 @@ import { tmpdir } from 'os';
 
 describe('column REST API', () => {
   const scratchDir = mkdtempSync(join(tmpdir(), 'flux-columns-rest-'));
-  const dataFile = join(scratchDir, 'data.sqlite');
+  const dataFile = join(scratchDir, 'data.json');
   let server: ReturnType<typeof Bun.spawn>;
   let baseUrl: string;
   let projectId: string;
@@ -64,7 +64,8 @@ describe('column REST API', () => {
       { id: 'ideas', label: 'Ideas', color: '#a855f7', role: 'backlog', order: 0 },
       { id: 'queued', label: 'Queued', color: '#6b7280', role: 'ready', order: 1 },
       { id: 'review', label: 'Review', color: '#3b82f6', role: 'active', order: 2 },
-      { id: 'shipped', label: 'Shipped', color: '#22c55e', role: 'done', order: 3 },
+      { id: 'building', label: 'Building', color: '#06b6d4', role: 'active', order: 3 },
+      { id: 'shipped', label: 'Shipped', color: '#22c55e', role: 'done', order: 4 },
     ];
     const replaced = await fetch(`${baseUrl}/api/projects/${projectId}/columns`, {
       method: 'PUT',
@@ -124,5 +125,64 @@ describe('column REST API', () => {
     });
     expect(epicPatchResponse.status).toBe(400);
     expect((await epicPatchResponse.json()).error).toContain('shipped (Shipped)');
+  });
+
+  it('clears workers on active-to-ready moves and keeps them on active-to-active moves', async () => {
+    const createdResponse = await fetch(`${baseUrl}/api/projects/${projectId}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Worker transitions', status: 'queued' }),
+    });
+    const task = await createdResponse.json();
+
+    const activatedResponse = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'review', agent_name: 'agent-1' }),
+    });
+    expect((await activatedResponse.json()).workers).toEqual(['agent-1']);
+
+    const continuedResponse = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'building' }),
+    });
+    expect((await continuedResponse.json()).workers).toEqual(['agent-1']);
+
+    const queuedResponse = await fetch(`${baseUrl}/api/tasks/${task.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'queued' }),
+    });
+    expect((await queuedResponse.json()).workers).toEqual([]);
+  });
+
+  it('allows project-scoped keys to read columns but keeps configuration writes server-only', async () => {
+    const hiddenProjectResponse = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Hidden project', visibility: 'private' }),
+    });
+    const hiddenProject = await hiddenProjectResponse.json();
+    const keyResponse = await fetch(`${baseUrl}/api/auth/keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Project reader', project_ids: [projectId] }),
+    });
+    const { key } = await keyResponse.json();
+    const headers = { Authorization: `Bearer ${key}` };
+
+    const readable = await fetch(`${baseUrl}/api/projects/${projectId}/columns`, { headers });
+    expect(readable.status).toBe(200);
+
+    const hidden = await fetch(`${baseUrl}/api/projects/${hiddenProject.id}/columns`, { headers });
+    expect(hidden.status).toBe(404);
+
+    const write = await fetch(`${baseUrl}/api/projects/${projectId}/columns`, {
+      method: 'PUT',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify(await readable.json()),
+    });
+    expect(write.status).toBe(401);
   });
 });

@@ -20,7 +20,6 @@ import {
   setColumns,
   deleteColumn,
   isActiveColumn,
-  isDoneColumn,
   getEpics,
   getEpic,
   createEpic,
@@ -273,9 +272,10 @@ app.patch('/api/projects/:id', requireServerAccess, async (c) => {
   return c.json(project);
 });
 
-app.get('/api/projects/:projectId/columns', requireServerAccess, (c) => {
+app.get('/api/projects/:projectId/columns', (c) => {
+  const auth = c.get('auth');
   const projectId = c.req.param('projectId');
-  if (!getProject(projectId)) {
+  if (!getProject(projectId) || !canReadProject(auth, projectId)) {
     return c.json({ error: 'Project not found' }, 404);
   }
   return c.json(getColumns(projectId));
@@ -510,7 +510,7 @@ app.patch('/api/tasks/:id', async (c) => {
     if (!currentWorkers.includes(agentName)) {
       body.workers = [...currentWorkers, agentName];
     }
-  } else if (isDoneColumn(previous.project_id, body.status)) {
+  } else if (body.status !== undefined && !isActiveColumn(previous.project_id, body.status)) {
     body.workers = [];
   }
   delete body.agent_name; // Don't persist agent_name on the task itself

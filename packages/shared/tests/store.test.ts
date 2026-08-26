@@ -138,6 +138,39 @@ describe('store', () => {
     expect(getEpic(epic.id)?.status).toBe('todo');
   });
 
+  it('clears workers when deleting a column into a non-active column', () => {
+    const project = createProject('Worker cleanup');
+    const columns: Column[] = [
+      { id: 'queued', label: 'Queued', color: '#6b7280', role: 'ready', order: 0 },
+      { id: 'review', label: 'Review', color: '#3b82f6', role: 'active', order: 1 },
+      { id: 'shipped', label: 'Shipped', color: '#22c55e', role: 'done', order: 2 },
+    ];
+    setColumns(project.id, columns);
+    const task = createTask(project.id, 'Task');
+    updateTask(task.id, { status: 'review', workers: ['agent-1'] });
+
+    deleteColumn(project.id, 'review', 'queued');
+
+    expect(getTasks(project.id)[0].status).toBe('queued');
+    expect(getTasks(project.id)[0].workers).toEqual([]);
+  });
+
+  it('clears workers on non-active updates and preserves them between active columns', () => {
+    const project = createProject('Worker transitions');
+    const columns: Column[] = [
+      { id: 'queued', label: 'Queued', color: '#6b7280', role: 'ready', order: 0 },
+      { id: 'building', label: 'Building', color: '#3b82f6', role: 'active', order: 1 },
+      { id: 'review', label: 'Review', color: '#06b6d4', role: 'active', order: 2 },
+      { id: 'shipped', label: 'Shipped', color: '#22c55e', role: 'done', order: 3 },
+    ];
+    setColumns(project.id, columns);
+    const task = createTask(project.id, 'Task');
+    updateTask(task.id, { status: 'building', workers: ['agent-1'] });
+
+    expect(updateTask(task.id, { status: 'review' })?.workers).toEqual(['agent-1']);
+    expect(updateTask(task.id, { status: 'queued' })?.workers).toEqual([]);
+  });
+
   it('refuses to remove the last ready-role or done-role column', () => {
     const project = createProject('Required roles');
 
