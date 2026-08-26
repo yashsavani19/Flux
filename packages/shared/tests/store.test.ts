@@ -9,16 +9,23 @@ import {
   createEpic,
   createProject,
   createTask,
+  deleteColumn,
   deleteProject,
   deleteTaskComment,
+  getColumns,
+  getEpic,
   getProject,
+  getProjectStats,
+  getReadyTasks,
   getTasks,
   initStore,
   isTaskBlocked,
   removeDependency,
+  setColumns,
   setStorageAdapter,
   updateTask,
 } from '../src/store.js';
+import { DEFAULT_COLUMNS, type Column } from '../src/types.js';
 
 type AdapterData = Store & { project?: Store['projects'][number] };
 
@@ -90,6 +97,73 @@ describe('store', () => {
 
     expect(getProject(project.id)).toBeUndefined();
     expect(getTasks(project.id)).toHaveLength(0);
+  });
+
+  it('falls back to the original columns and defaults for an uncustomised project', () => {
+    const project = createProject('Legacy defaults');
+    const task = createTask(project.id, 'Task');
+    const epic = createEpic(project.id, 'Epic');
+
+    expect(getColumns(project.id)).toEqual(DEFAULT_COLUMNS);
+    expect(task.status).toBe('planning');
+    expect(epic.status).toBe('planning');
+  });
+
+  it('renames a column without changing its id or moving its tasks', () => {
+    const project = createProject('Renames');
+    const task = createTask(project.id, 'Task');
+    const renamed = getColumns(project.id).map(column =>
+      column.id === 'planning' ? { ...column, label: 'Ideas' } : column
+    );
+
+    setColumns(project.id, renamed);
+
+    expect(getColumns(project.id).find(column => column.id === 'planning')?.label).toBe('Ideas');
+    expect(getTasks(project.id)[0].status).toBe('planning');
+    expect(task.id).toBe(getTasks(project.id)[0].id);
+  });
+
+  it('moves every task and epic before deleting a column', () => {
+    const project = createProject('Deletion');
+    const taskA = createTask(project.id, 'Task A');
+    const taskB = createTask(project.id, 'Task B');
+    const epic = createEpic(project.id, 'Epic');
+    updateTask(taskB.id, { status: 'todo' });
+
+    deleteColumn(project.id, 'planning', 'todo');
+
+    expect(getTasks(project.id)).toHaveLength(2);
+    expect(getTasks(project.id).map(task => task.id).sort()).toEqual([taskA.id, taskB.id].sort());
+    expect(getTasks(project.id).every(task => task.status === 'todo')).toBe(true);
+    expect(getEpic(epic.id)?.status).toBe('todo');
+  });
+
+  it('refuses to remove the last ready-role or done-role column', () => {
+    const project = createProject('Required roles');
+
+    expect(() => deleteColumn(project.id, 'todo', 'planning')).toThrow('ready to start');
+    expect(() => deleteColumn(project.id, 'done', 'todo')).toThrow('finished work');
+  });
+
+  it('uses a custom done-role column for dependencies, ready tasks, and stats', () => {
+    const project = createProject('Custom completion');
+    const columns: Column[] = [
+      { id: 'ideas', label: 'Ideas', color: '#a855f7', role: 'backlog', order: 0 },
+      { id: 'queued', label: 'Queued', color: '#6b7280', role: 'ready', order: 1 },
+      { id: 'building', label: 'Building', color: '#3b82f6', role: 'active', order: 2 },
+      { id: 'shipped', label: 'Shipped', color: '#22c55e', role: 'done', order: 3 },
+    ];
+    setColumns(project.id, columns);
+    const blocker = createTask(project.id, 'Blocker');
+    const dependent = createTask(project.id, 'Dependent', undefined, { depends_on: [blocker.id] });
+
+    expect(isTaskBlocked(dependent.id)).toBe(true);
+    updateTask(blocker.id, { status: 'shipped' });
+
+    expect(isTaskBlocked(dependent.id)).toBe(false);
+    expect(getReadyTasks(project.id).map(task => task.id)).toContain(dependent.id);
+    expect(getReadyTasks(project.id).map(task => task.id)).not.toContain(blocker.id);
+    expect(getProjectStats(project.id)).toEqual({ total: 2, done: 1 });
   });
 
   it('tracks dependencies and blocked state', () => {
