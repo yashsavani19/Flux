@@ -1,9 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createSqliteAdapter } from '../src/adapters/sqlite-adapter';
 import { unlinkSync, existsSync } from 'fs';
-import type { Task, Project } from '../src/types';
 
-const TEST_DB = '/tmp/flux-concurrency-test.sqlite';
+const TEST_DB = `/tmp/flux-concurrency-test-${process.pid}.sqlite`;
 
 function cleanup() {
   if (existsSync(TEST_DB)) {
@@ -29,41 +28,45 @@ describe('SQLite Adapter Concurrency', () => {
     initAdapter.data.tasks = [];
     initAdapter.write();
 
-    // Simulate concurrent writes from separate processes (like docker exec)
-    async function writeTask(agentId: string, taskNum: number) {
-      // Each call creates a NEW adapter instance (simulates separate process)
-      const adapter = createSqliteAdapter(TEST_DB);
+    const adapterPath = new URL('../src/adapters/sqlite-adapter.ts', import.meta.url).pathname;
+    const writerScript = `
+      import { createSqliteAdapter } from ${JSON.stringify(adapterPath)};
+      const adapter = createSqliteAdapter(process.env.FLUX_TEST_DB!);
       adapter.read();
-
-      // Simulate some processing delay
-      await new Promise(resolve => setTimeout(resolve, Math.random() * 10));
-
-      const task: Task = {
-        id: `${agentId}-task-${taskNum}`,
-        title: `Task ${taskNum} from ${agentId}`,
+      await Bun.sleep(Math.random() * 20);
+      adapter.data.tasks.push({
+        id: process.env.FLUX_TEST_TASK_ID!,
+        title: 'Concurrent task',
         status: 'todo',
         depends_on: [],
         comments: [],
         project_id: 'test-project',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      adapter.data.tasks.push(task);
+      });
       adapter.write();
-    }
+    `;
 
-    // Run 30 concurrent writes (3 agents × 10 tasks each)
-    const writes = [];
+    // Use real processes, matching one `docker exec` per MCP call. Calling the
+    // synchronous write() method from promises would still run serially.
+    const writers = [];
     for (let i = 0; i < 10; i++) {
-      writes.push(
-        writeTask('agent-A', i),
-        writeTask('agent-B', i),
-        writeTask('agent-C', i)
-      );
+      for (const agent of ['A', 'B', 'C']) {
+        writers.push(Bun.spawn([process.execPath, '-e', writerScript], {
+          env: {
+            ...process.env,
+            FLUX_TEST_DB: TEST_DB,
+            FLUX_TEST_TASK_ID: `agent-${agent}-task-${i}`,
+          },
+          stdout: 'pipe',
+          stderr: 'pipe',
+        }));
+      }
     }
 
-    await Promise.all(writes);
+    const results = await Promise.all(writers.map(async process => ({
+      exitCode: await process.exited,
+      stderr: await new Response(process.stderr).text(),
+    })));
+    expect(results.filter(result => result.exitCode !== 0)).toEqual([]);
 
     // Verify all tasks were saved
     const finalAdapter = createSqliteAdapter(TEST_DB);
