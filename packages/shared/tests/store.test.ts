@@ -390,6 +390,19 @@ describe('store', () => {
     expect(updated?.guardrails?.[0].id).toBeDefined();
   });
 
+  it('preserves guardrails when an unrelated task field changes', () => {
+    const project = createProject('Guardrail preservation');
+    const task = createTask(project.id, 'Task', undefined, {
+      guardrails: [{ id: 'g1', number: 9999, text: 'Never lose this' }],
+    });
+
+    const updated = updateTask(task.id, { title: 'Renamed task' });
+
+    expect(updated?.guardrails).toEqual([
+      { id: 'g1', number: 9999, text: 'Never lose this' },
+    ]);
+  });
+
   it('clears acceptance_criteria with empty array', () => {
     const project = createProject('Project');
     const task = createTask(project.id, 'Task', undefined, {

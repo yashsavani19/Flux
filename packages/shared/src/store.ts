@@ -518,10 +518,10 @@ export function updateTask(id: string, updates: Partial<Omit<Task, 'id'>>): Task
       throw new Error('Circular dependency detected');
     }
   }
-  const processedUpdates = {
-    ...updates,
-    guardrails: updates.guardrails !== undefined ? ensureGuardrailIds(updates.guardrails) : undefined,
-  };
+  const processedUpdates: Partial<Omit<Task, 'id'>> = { ...updates };
+  if (updates.guardrails !== undefined) {
+    processedUpdates.guardrails = ensureGuardrailIds(updates.guardrails);
+  }
   const resultingStatus = updates.status ?? currentTask.status;
   if (!isActiveColumn(currentTask.project_id, resultingStatus)) {
     processedUpdates.workers = [];
