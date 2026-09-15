@@ -1,7 +1,14 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { createSqliteAdapter } from '../src/adapters/sqlite-adapter';
+import {
+  createProject,
+  createTask,
+  deleteTask,
+  initStore,
+  setStorageAdapter,
+} from '../src/store';
 import { unlinkSync, existsSync } from 'fs';
-import type { Task, Project } from '../src/types';
+import type { StoreWithWebhooks, Task } from '../src/types';
 
 const TEST_DB = '/tmp/flux-concurrency-test.sqlite';
 
@@ -209,12 +216,116 @@ describe('SQLite Adapter Concurrency', () => {
 
     // Should have: 1 existing (existing-1) + 5 new = 6 tasks
     // existing-2 should be deleted
-    expect(finalAdapter.data.tasks.length).toBeGreaterThanOrEqual(6);
+    expect(finalAdapter.data.tasks.length).toBe(6);
+    expect(finalAdapter.data.tasks.find(t => t.id === 'existing-2')).toBeUndefined();
 
     const existing1 = finalAdapter.data.tasks.find(t => t.id === 'existing-1');
-    expect(existing1).toBeDefined();
+    expect(existing1?.status).toBe('in_progress');
 
     const newTasks = finalAdapter.data.tasks.filter(t => t.id.startsWith('new-'));
     expect(newTasks.length).toBe(5);
+  });
+
+  test('concurrent writes preserve changes to different fields on the same task', () => {
+    const initAdapter = createSqliteAdapter(TEST_DB);
+    initAdapter.read();
+    initAdapter.data.projects = [{ id: 'test-project', name: 'Test' }];
+    initAdapter.data.tasks = [{
+      id: 'task-1',
+      title: 'Original',
+      status: 'todo',
+      depends_on: [],
+      comments: [],
+      project_id: 'test-project',
+    }];
+    initAdapter.write();
+
+    const titleWriter = createSqliteAdapter(TEST_DB);
+    const statusWriter = createSqliteAdapter(TEST_DB);
+    titleWriter.read();
+    statusWriter.read();
+
+    titleWriter.data.tasks[0].title = 'Renamed';
+    titleWriter.write();
+    statusWriter.data.tasks[0].status = 'in_progress';
+    statusWriter.write();
+
+    const finalAdapter = createSqliteAdapter(TEST_DB);
+    finalAdapter.read();
+    expect(finalAdapter.data.tasks[0]).toMatchObject({
+      title: 'Renamed',
+      status: 'in_progress',
+    });
+  });
+
+  test('a committed deletion is not revived by a stale writer', () => {
+    const initAdapter = createSqliteAdapter(TEST_DB);
+    initAdapter.read();
+    initAdapter.data.projects = [{ id: 'test-project', name: 'Test' }];
+    initAdapter.data.tasks = [{
+      id: 'task-1',
+      title: 'Original',
+      status: 'todo',
+      depends_on: [],
+      comments: [],
+      project_id: 'test-project',
+    }];
+    initAdapter.write();
+
+    const deleteWriter = createSqliteAdapter(TEST_DB);
+    const staleWriter = createSqliteAdapter(TEST_DB);
+    deleteWriter.read();
+    staleWriter.read();
+
+    deleteWriter.data.tasks = [];
+    deleteWriter.write();
+    staleWriter.data.tasks[0].title = 'Stale rename';
+    staleWriter.write();
+
+    const finalAdapter = createSqliteAdapter(TEST_DB);
+    finalAdapter.read();
+    expect(finalAdapter.data.tasks).toHaveLength(0);
+  });
+
+  test('optional store collections survive writes and support deletion', () => {
+    const initAdapter = createSqliteAdapter(TEST_DB);
+    initAdapter.read();
+    const initialData = initAdapter.data as StoreWithWebhooks;
+    initialData.webhooks = [{
+      id: 'webhook-1',
+      name: 'Test',
+      url: 'https://example.com/hook',
+      events: ['task.created'],
+      enabled: true,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    }];
+    initAdapter.write();
+
+    const deleteWriter = createSqliteAdapter(TEST_DB);
+    deleteWriter.read();
+    expect((deleteWriter.data as StoreWithWebhooks).webhooks).toHaveLength(1);
+    (deleteWriter.data as StoreWithWebhooks).webhooks = [];
+    deleteWriter.write();
+
+    const finalAdapter = createSqliteAdapter(TEST_DB);
+    finalAdapter.read();
+    expect((finalAdapter.data as StoreWithWebhooks).webhooks).toEqual([]);
+  });
+
+  test('store-level task deletion survives reopening the database', () => {
+    const adapter = createSqliteAdapter(TEST_DB);
+    setStorageAdapter(adapter);
+    initStore();
+    const project = createProject('Delete integration');
+    const task = createTask(project.id, 'Delete me', undefined, {
+      guardrails: [{ id: 'guardrail-1', number: 9999, text: 'Scratch data only' }],
+    });
+
+    expect(deleteTask(task.id)).toBe(true);
+
+    const reopened = createSqliteAdapter(TEST_DB);
+    reopened.read();
+    expect(reopened.data.tasks.find(item => item.id === task.id)).toBeUndefined();
   });
 });
